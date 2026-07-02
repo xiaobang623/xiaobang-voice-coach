@@ -31,6 +31,19 @@ export function countUserSpeechStats(messages: VoiceSessionMessage[]): {
   return { wordCount, sentenceCount };
 }
 
+async function readResponseErrorDetail(response: Response): Promise<string> {
+  const body = await response.text();
+  if (!body) {
+    return "";
+  }
+  try {
+    const payload = JSON.parse(body) as { error?: string; detail?: string };
+    return payload.error ?? payload.detail ?? body;
+  } catch {
+    return body;
+  }
+}
+
 export async function generateReport(input: GenerateReportInput): Promise<ReportJSON> {
   const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
   const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -55,15 +68,9 @@ export async function generateReport(input: GenerateReportInput): Promise<Report
   });
 
   if (!response.ok) {
-    let detail = "";
-    try {
-      const payload = (await response.json()) as { error?: string; detail?: string };
-      detail = payload.error ?? payload.detail ?? "";
-    } catch {
-      detail = await response.text();
-    }
+    const detail = await readResponseErrorDetail(response);
     if (!useSupabase && response.status === 404) {
-      throw new Error("复盘服务没启动，请先运行 npm run report-server");
+      throw new Error("复盘服务未配置，请在 Vercel 设置 DEEPSEEK_API_KEY 或配置 Supabase。");
     }
     throw new Error(detail || `生成复盘失败（${response.status}）`);
   }

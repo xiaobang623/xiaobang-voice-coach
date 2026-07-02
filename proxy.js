@@ -194,7 +194,18 @@ wss.on("connection", (clientSocket) => {
     },
   });
 
+  const upstreamConnectTimer = setTimeout(() => {
+    if (upstreamSocket.readyState === WebSocket.CONNECTING) {
+      console.error("[proxy] upstream connect timeout");
+      upstreamSocket.terminate();
+      if (clientSocket.readyState === WebSocket.OPEN || clientSocket.readyState === WebSocket.CONNECTING) {
+        clientSocket.close(1011, "Upstream connect timeout");
+      }
+    }
+  }, 12_000);
+
   upstreamSocket.on("open", () => {
+    clearTimeout(upstreamConnectTimer);
     // Flush any messages buffered while upstream was connecting
     for (const { data, isBinary } of messageQueue) {
       upstreamSocket.send(data, { binary: isBinary });
@@ -203,6 +214,7 @@ wss.on("connection", (clientSocket) => {
   });
 
   upstreamSocket.on("unexpected-response", (_request, response) => {
+    clearTimeout(upstreamConnectTimer);
     const chunks = [];
     response.on("data", (chunk) => {
       chunks.push(Buffer.from(chunk));
@@ -215,6 +227,9 @@ wss.on("connection", (clientSocket) => {
         headers: response.headers,
         body,
       });
+      if (clientSocket.readyState === WebSocket.OPEN || clientSocket.readyState === WebSocket.CONNECTING) {
+        clientSocket.close(1011, "Upstream auth failed");
+      }
     });
   });
 
@@ -265,6 +280,7 @@ wss.on("connection", (clientSocket) => {
   });
 
   upstreamSocket.on("error", (error) => {
+    clearTimeout(upstreamConnectTimer);
     console.error("[proxy] upstream socket error", error);
     if (
       clientSocket.readyState === WebSocket.OPEN ||

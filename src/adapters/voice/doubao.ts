@@ -8,6 +8,7 @@ import type {
 
 const WS_URL = import.meta.env.VITE_VOICE_PROXY_URL ?? "ws://localhost:8080";
 const TTS_SAMPLE_RATE = 16000;
+const CONNECT_TIMEOUT_MS = 15_000;
 
 const enum MessageType {
   FULL_CLIENT_REQUEST = 0b0001,
@@ -67,8 +68,16 @@ export class DoubaoVoiceAdapter implements VoiceAdapter {
   private botTextBuffer = "";  // accumulates streaming text chunks from event 550
   private readonly maxReconnectAttempts = 1;
   private connectPromise: Promise<void> | null = null;
+  private connectTimeoutId: ReturnType<typeof setTimeout> | null = null;
   private resolveConnect: (() => void) | null = null;
   private rejectConnect: ((reason?: unknown) => void) | null = null;
+
+  private clearConnectTimeout(): void {
+    if (this.connectTimeoutId !== null) {
+      clearTimeout(this.connectTimeoutId);
+      this.connectTimeoutId = null;
+    }
+  }
 
   async connect(config: VoiceConfig): Promise<void> {
     if (this.connectPromise) {
@@ -80,12 +89,20 @@ export class DoubaoVoiceAdapter implements VoiceAdapter {
     this.connectPromise = new Promise<void>((resolve, reject) => {
       this.resolveConnect = resolve;
       this.rejectConnect = reject;
+      this.connectTimeoutId = setTimeout(() => {
+        this.rejectConnect?.(new Error("语音连接超时，请检查代理服务和豆包凭证配置。"));
+        this.clearConnectTimeout();
+        this.isManualDisconnect = true;
+        this.socket?.close();
+        this.socket = null;
+      }, CONNECT_TIMEOUT_MS);
       this.openSocket(config);
     });
 
     try {
       await this.connectPromise;
     } finally {
+      this.clearConnectTimeout();
       this.connectPromise = null;
       this.resolveConnect = null;
       this.rejectConnect = null;
@@ -185,6 +202,7 @@ export class DoubaoVoiceAdapter implements VoiceAdapter {
       }
 
       this.rejectConnect?.(new Error("Doubao websocket closed before session started."));
+      this.clearConnectTimeout();
       this.emitError(new Error("Voice disconnected."));
     };
 
@@ -275,12 +293,14 @@ export class DoubaoVoiceAdapter implements VoiceAdapter {
     }
 
     if (eventId === EventReceive.SessionStarted) {
+      this.clearConnectTimeout();
       this.reconnectAttempts = 0;
       this.resolveConnect?.();
       return;
     }
 
     if (eventId === EventReceive.SessionFailed) {
+      this.clearConnectTimeout();
       this.rejectConnect?.(
         new Error(`Session start failed: ${JSON.stringify(payload)}`),
       );
