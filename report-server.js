@@ -1,0 +1,140 @@
+import { createServer } from "node:http";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
+const LOCAL_PORT = 8090;
+const ENV_LOCAL_PATH = resolve(process.cwd(), ".env.local");
+
+function parseEnvLocalFile() {
+  if (!existsSync(ENV_LOCAL_PATH)) {
+    return {};
+  }
+
+  const file = readFileSync(ENV_LOCAL_PATH, "utf8");
+  const entries = {};
+  for (const rawLine of file.split("\n")) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) {
+      continue;
+    }
+    const separatorIndex = line.indexOf("=");
+    if (separatorIndex <= 0) {
+      continue;
+    }
+    const key = line.slice(0, separatorIndex).trim();
+    const value = line.slice(separatorIndex + 1).trim().replace(/^["']|["']$/g, "");
+    entries[key] = value;
+  }
+  return entries;
+}
+
+import { SYSTEM_PROMPT, postProcessReport } from "./report-post-process.js";
+
+const envLocal = parseEnvLocalFile();
+const apiKey = process.env.DEEPSEEK_API_KEY ?? envLocal.DEEPSEEK_API_KEY;
+
+function sendJson(res, statusCode, body) {
+  res.writeHead(statusCode, {
+    "Content-Type": "application/json",
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Headers": "content-type",
+  });
+  res.end(JSON.stringify(body));
+}
+
+const server = createServer(async (req, res) => {
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "content-type",
+    });
+    res.end();
+    return;
+  }
+
+  if (req.method !== "POST" || req.url !== "/generate-report") {
+    sendJson(res, 404, { error: "Not found" });
+    return;
+  }
+
+  if (!apiKey) {
+    sendJson(res, 500, { error: "DEEPSEEK_API_KEY is not configured in .env.local" });
+    return;
+  }
+
+  let body = "";
+  for await (const chunk of req) {
+    body += chunk;
+  }
+
+  let input;
+  try {
+    input = JSON.parse(body);
+  } catch {
+    sendJson(res, 400, { error: "Invalid JSON body" });
+    return;
+  }
+
+  if (!input.transcript?.trim()) {
+    sendJson(res, 400, { error: "transcript is required" });
+    return;
+  }
+
+  try {
+    const deepseekResponse = await fetch("https://api.deepseek.com/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: "deepseek-chat",
+        temperature: 0.3,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: SYSTEM_PROMPT },
+          {
+            role: "user",
+            content: `sessionId: ${input.sessionId}\ndurationSeconds: ${input.durationSeconds}\n\nTranscript:\n${input.transcript}`,
+          },
+        ],
+      }),
+    });
+
+    if (!deepseekResponse.ok) {
+      const detail = await deepseekResponse.text();
+      sendJson(res, 502, { error: "DeepSeek request failed", detail });
+      return;
+    }
+
+    const completion = await deepseekResponse.json();
+    const content = completion?.choices?.[0]?.message?.content;
+    if (!content || typeof content !== "string") {
+      sendJson(res, 502, { error: "Empty model response" });
+      return;
+    }
+
+    const raw = JSON.parse(content);
+    const report = postProcessReport(raw, input);
+
+    sendJson(res, 200, report);
+  } catch (error) {
+    sendJson(res, 500, {
+      error: error instanceof Error ? error.message : "Report generation failed",
+    });
+  }
+});
+
+server.on("error", (error) => {
+  if (error?.code === "EADDRINUSE") {
+    console.error(`[report-server] port ${LOCAL_PORT} is already in use.`);
+    process.exitCode = 1;
+    return;
+  }
+  console.error("[report-server] server error", error);
+});
+
+server.listen(LOCAL_PORT, () => {
+  console.log(`[report-server] listening on http://localhost:${LOCAL_PORT}`);
+});
