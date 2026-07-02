@@ -65,6 +65,7 @@ export async function generateReport(input: GenerateReportInput): Promise<Report
     method: "POST",
     headers,
     body: JSON.stringify(input),
+    signal: AbortSignal.timeout(60_000),
   });
 
   if (!response.ok) {
