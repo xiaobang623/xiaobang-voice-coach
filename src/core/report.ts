@@ -48,7 +48,12 @@ export async function generateReport(input: GenerateReportInput): Promise<Report
   const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
   const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-  const useSupabase = Boolean(supabaseUrl && anonKey);
+  // Report generation defaults to /api/generate-report (local report-server in
+  // dev, Vercel function in prod). Only route to the Supabase Edge Function when
+  // explicitly opted in — merely *configuring* Supabase (for auth/storage) must
+  // NOT hijack the report endpoint to an undeployed function.
+  const useSupabase =
+    import.meta.env.VITE_USE_SUPABASE_FUNCTIONS === "true" && Boolean(supabaseUrl && anonKey);
   const endpoint = useSupabase
     ? `${supabaseUrl}/functions/v1/generate-report`
     : "/api/generate-report";

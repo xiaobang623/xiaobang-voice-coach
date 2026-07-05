@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from "react";
+import { AccountModal } from "./components/AccountModal";
 import { TopicSelector } from "./components/TopicSelector";
 import { VoiceSession } from "./components/VoiceSession";
 import {
@@ -7,6 +8,8 @@ import {
   generateReport,
 } from "./core/report";
 import { useVoiceSession } from "./hooks/useVoiceSession";
+import { useAuth } from "./hooks/useAuth";
+import { persistSessionReport } from "./core/storage";
 import {
   buildSystemPrompt,
   DEFAULT_SPEED_RATIO,
@@ -46,6 +49,7 @@ const TOPICS: TopicOption[] = [
 ];
 
 function App() {
+  const { isConfigured, isAnonymous } = useAuth();
   const [view, setView] = useState<"topics" | "chat">("topics");
   const voice = useVoiceSession();
   const [report, setReport] = useState<ReportJSON | null>(null);
@@ -113,12 +117,21 @@ function App() {
         durationSeconds,
       });
       setReport(nextReport);
+
+      // Persist in the background; storage failures must not block the UI.
+      void persistSessionReport({
+        sessionId: sessionIdRef.current,
+        topic: topicId,
+        transcript,
+        durationSeconds,
+        report: nextReport,
+      });
     } catch (error) {
       setReportError(error instanceof Error ? error.message : String(error));
     } finally {
       setReportLoading(false);
     }
-  }, [voice]);
+  }, [voice, topicId]);
 
   const sessionLabel = useMemo(() => {
     if (!topicId) {
@@ -132,16 +145,25 @@ function App() {
       <div className="mx-auto max-w-2xl px-6 py-8">
         <header className="flex items-center justify-between">
           <h1 className="text-lg font-medium text-[#7C6B5D]">小榜 · 陪你说英语</h1>
-          {view === "chat" ? (
-            <button
-              type="button"
-              onClick={handleExitChat}
-              className="text-sm text-[#A89B8C] transition-colors hover:text-[#7C6B5D]"
-            >
-              换个话题
-            </button>
-          ) : null}
+          <div className="flex items-center gap-4">
+            <AccountModal />
+            {view === "chat" ? (
+              <button
+                type="button"
+                onClick={handleExitChat}
+                className="text-sm text-[#A89B8C] transition-colors hover:text-[#7C6B5D]"
+              >
+                换个话题
+              </button>
+            ) : null}
+          </div>
         </header>
+
+        {view === "topics" && isConfigured && isAnonymous ? (
+          <p className="mt-3 rounded-2xl bg-[#FFF9F3] px-4 py-2.5 text-xs leading-relaxed text-[#A89B8C]">
+            当前为游客模式，练习记录和成长记忆不会保存到账号。注册后可跨设备找回。
+          </p>
+        ) : null}
 
         {view === "topics" ? (
           <TopicSelector

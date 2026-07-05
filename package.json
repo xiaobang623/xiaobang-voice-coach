@@ -12,6 +12,7 @@
     "report-server": "node report-server.js"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.110.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "ws": "^8.21.0"
