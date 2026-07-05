@@ -1,5 +1,6 @@
-import { useCallback, useMemo, useRef, useState } from "react";
-import { AccountModal } from "./components/AccountModal";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { BottomTabBar, type MainTab } from "./components/BottomTabBar";
+import { MeView } from "./components/MeView";
 import { TopicSelector } from "./components/TopicSelector";
 import { VoiceSession } from "./components/VoiceSession";
 import {
@@ -7,21 +8,27 @@ import {
   countUserSpeechStats,
   generateReport,
 } from "./core/report";
+import { extractMemory } from "./core/memory";
 import { useVoiceSession } from "./hooks/useVoiceSession";
 import { useAuth } from "./hooks/useAuth";
-import { persistSessionReport } from "./core/storage";
+import { useUserPreferences } from "./hooks/useUserPreferences";
+import { loadUserMemory, loadGrowthPageData, persistSessionReport, upsertUserMemory } from "./core/storage";
+import {
+  GROWTH_CACHE_STALE_MS,
+  growthCacheAgeMs,
+  writeGrowthCache,
+} from "./core/growthCache";
 import {
   buildSystemPrompt,
-  DEFAULT_SPEED_RATIO,
-  DEFAULT_VOICE_TYPE,
 } from "./config/session";
-import type { ReportJSON, SessionSettings, TopicOption } from "./types";
+import type { MemorySummary, ReportJSON, SessionSettings, TopicOption } from "./types";
 
 const TOPICS: TopicOption[] = [
   {
     id: "daily",
     title: "今天过得怎么样",
     description: "从日常小事聊起，最放松的开场",
+    openingHint: "小榜会先问你今天过得怎么样，比如 How has your day been?",
     promptSeed:
       "start by asking the user how their day has been and gently keep the small talk going.",
   },
@@ -29,6 +36,7 @@ const TOPICS: TopicOption[] = [
     id: "travel",
     title: "想去的地方",
     description: "聊聊旅行计划，或者印象最深的一次出行",
+    openingHint: "小榜会问你下次想去哪，或者最难忘的一次旅行",
     promptSeed:
       "start by asking where the user would love to travel next, or their most memorable trip.",
   },
@@ -36,6 +44,7 @@ const TOPICS: TopicOption[] = [
     id: "food",
     title: "吃点什么好",
     description: "推荐一家店、一道菜，或者自己做饭的故事",
+    openingHint: "小榜会问你最爱吃什么、常去哪家店，或者会不会自己做饭",
     promptSeed:
       "start by asking the user about food they love — a favorite dish, restaurant, or cooking they do.",
   },
@@ -43,24 +52,71 @@ const TOPICS: TopicOption[] = [
     id: "work",
     title: "工作与生活",
     description: "最近在忙什么，有什么想吐槽或分享的",
+    openingHint: "小榜会问你最近在忙什么、工作节奏怎么样",
     promptSeed:
       "start by asking what the user has been busy with at work lately and how they feel about it.",
   },
 ];
 
+type PracticeScreen = "topics" | "chat";
+
 function App() {
-  const { isConfigured, isAnonymous } = useAuth();
-  const [view, setView] = useState<"topics" | "chat">("topics");
+  const { isConfigured, isAnonymous, userId } = useAuth();
+  const { preferences, setVoiceType, setSpeedRatio, setShowSubtitle } = useUserPreferences();
+  const [mainTab, setMainTab] = useState<MainTab>("practice");
+  const [practiceScreen, setPracticeScreen] = useState<PracticeScreen>("topics");
   const voice = useVoiceSession();
   const [report, setReport] = useState<ReportJSON | null>(null);
   const [reportLoading, setReportLoading] = useState(false);
   const [reportError, setReportError] = useState<string | null>(null);
+  const [userMemory, setUserMemory] = useState<MemorySummary | null>(null);
   const sessionIdRef = useRef(crypto.randomUUID());
 
-  // Session personalization (voice / speed / topic).
-  const [voiceType, setVoiceType] = useState(DEFAULT_VOICE_TYPE);
-  const [speedRatio, setSpeedRatio] = useState(DEFAULT_SPEED_RATIO);
   const [topicId, setTopicId] = useState<string | null>(null);
+
+  const inChat = practiceScreen === "chat";
+
+  useEffect(() => {
+    if (!isConfigured || isAnonymous) {
+      setUserMemory(null);
+      return;
+    }
+
+    let cancelled = false;
+    void (async () => {
+      const memory = await loadUserMemory();
+      if (!cancelled) {
+        setUserMemory(memory);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isConfigured, isAnonymous]);
+
+  useEffect(() => {
+    if (!isConfigured || isAnonymous || !userId) {
+      return;
+    }
+
+    const cacheAge = growthCacheAgeMs(userId);
+    if (cacheAge !== null && cacheAge < GROWTH_CACHE_STALE_MS) {
+      return;
+    }
+
+    let cancelled = false;
+    void (async () => {
+      const data = await loadGrowthPageData();
+      if (!cancelled && data) {
+        writeGrowthCache(userId, data);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isConfigured, isAnonymous, userId]);
 
   const speechStats = useMemo(
     () => countUserSpeechStats(voice.messages),
@@ -70,20 +126,20 @@ function App() {
   const sessionSettings = useMemo<SessionSettings>(() => {
     const topic = TOPICS.find((t) => t.id === topicId);
     return {
-      voiceType,
-      speedRatio,
-      systemPrompt: buildSystemPrompt(topic?.promptSeed),
+      voiceType: preferences.voiceType,
+      speedRatio: preferences.speedRatio,
+      systemPrompt: buildSystemPrompt(topic?.promptSeed, userMemory),
     };
-  }, [voiceType, speedRatio, topicId]);
+  }, [preferences.voiceType, preferences.speedRatio, topicId, userMemory]);
 
   const handleSelectTopic = useCallback((selectedTopicId: string) => {
     setTopicId(selectedTopicId);
-    setView("chat");
+    setPracticeScreen("chat");
   }, []);
 
   const handleFreeTalk = useCallback(() => {
     setTopicId(null);
-    setView("chat");
+    setPracticeScreen("chat");
   }, []);
 
   const handleExitChat = useCallback(() => {
@@ -91,7 +147,7 @@ function App() {
     setReport(null);
     setReportError(null);
     sessionIdRef.current = crypto.randomUUID();
-    setView("topics");
+    setPracticeScreen("topics");
   }, [voice]);
 
   const handleEndAndReport = useCallback(async () => {
@@ -118,20 +174,36 @@ function App() {
       });
       setReport(nextReport);
 
-      // Persist in the background; storage failures must not block the UI.
-      void persistSessionReport({
-        sessionId: sessionIdRef.current,
-        topic: topicId,
-        transcript,
-        durationSeconds,
-        report: nextReport,
-      });
+      if (!isAnonymous) {
+        await persistSessionReport({
+          sessionId: sessionIdRef.current,
+          topic: topicId,
+          transcript,
+          durationSeconds,
+          report: nextReport,
+        });
+
+        try {
+          const nextMemory = await extractMemory({
+            transcript,
+            report: nextReport,
+            previousSummary: userMemory,
+          });
+          await upsertUserMemory(nextMemory);
+          setUserMemory(nextMemory);
+        } catch (memoryError) {
+          console.warn(
+            "[memory] extraction failed:",
+            memoryError instanceof Error ? memoryError.message : memoryError,
+          );
+        }
+      }
     } catch (error) {
       setReportError(error instanceof Error ? error.message : String(error));
     } finally {
       setReportLoading(false);
     }
-  }, [voice, topicId]);
+  }, [voice, topicId, isAnonymous, userMemory]);
 
   const sessionLabel = useMemo(() => {
     if (!topicId) {
@@ -140,46 +212,73 @@ function App() {
     return TOPICS.find((t) => t.id === topicId)?.title ?? "自由畅聊";
   }, [topicId]);
 
+  const activeTopic = useMemo(
+    () => (topicId ? (TOPICS.find((t) => t.id === topicId) ?? null) : null),
+    [topicId],
+  );
+
+  const handleMainTabChange = useCallback((tab: MainTab) => {
+    if (inChat) {
+      return;
+    }
+    setMainTab(tab);
+  }, [inChat]);
+
   return (
-    <main className="min-h-screen bg-[#FAF8F3] text-[#3D3D3D]">
-      <div className="mx-auto max-w-2xl px-6 py-8">
-        <header className="flex items-center justify-between">
-          <h1 className="text-lg font-medium text-[#7C6B5D]">小榜 · 陪你说英语</h1>
-          <div className="flex items-center gap-4">
-            <AccountModal />
-            {view === "chat" ? (
+    <div className="min-h-screen bg-bg text-text">
+      <header className="sticky top-0 z-30 border-b border-border-subtle/70 bg-bg/90 backdrop-blur-xl">
+        <div className="page-shell flex items-center gap-3 py-4">
+          {inChat ? (
+            <>
               <button
                 type="button"
                 onClick={handleExitChat}
-                className="text-sm text-[#A89B8C] transition-colors hover:text-[#7C6B5D]"
+                className="flex shrink-0 items-center gap-0.5 rounded-full px-2 py-1.5 text-sm text-text-secondary transition-colors hover:bg-bg-warm/70 hover:text-text"
               >
-                换个话题
+                ← 返回
               </button>
-            ) : null}
-          </div>
-        </header>
+              <p className="min-w-0 flex-1 truncate text-center text-sm font-medium text-text">
+                {sessionLabel}
+              </p>
+              <span className="w-14 shrink-0" aria-hidden="true" />
+            </>
+          ) : (
+            <div className="flex items-baseline gap-2">
+              <h1 className="text-lg font-semibold text-text">小榜</h1>
+              <span className="text-sm text-text-muted">陪你说英语</span>
+            </div>
+          )}
+        </div>
+      </header>
 
-        {view === "topics" && isConfigured && isAnonymous ? (
-          <p className="mt-3 rounded-2xl bg-[#FFF9F3] px-4 py-2.5 text-xs leading-relaxed text-[#A89B8C]">
-            当前为游客模式，练习记录和成长记忆不会保存到账号。注册后可跨设备找回。
-          </p>
+      <main className={`page-shell ${inChat ? "pb-6 pt-1" : "pb-28 pt-2"}`}>
+        {mainTab === "practice" && practiceScreen === "topics" ? (
+          <>
+            {isConfigured && isAnonymous ? (
+              <p className="mb-5 rounded-2xl border border-border-subtle bg-surface px-4 py-3 text-xs leading-relaxed text-text-muted">
+                游客模式：可直接开聊。记录和记忆请点右上角齿轮 → 账号 注册保存。
+              </p>
+            ) : null}
+            <TopicSelector
+              topics={TOPICS}
+              onSelectTopic={handleSelectTopic}
+              onFreeTalk={handleFreeTalk}
+            />
+          </>
         ) : null}
 
-        {view === "topics" ? (
-          <TopicSelector
-            topics={TOPICS}
-            onSelectTopic={handleSelectTopic}
-            onFreeTalk={handleFreeTalk}
-          />
-        ) : (
+        {mainTab === "practice" && practiceScreen === "chat" ? (
           <VoiceSession
             voice={voice}
             settings={sessionSettings}
             sessionLabel={sessionLabel}
-            voiceType={voiceType}
+            activeTopic={activeTopic}
+            voiceType={preferences.voiceType}
             onVoiceChange={setVoiceType}
-            speedRatio={speedRatio}
+            speedRatio={preferences.speedRatio}
             onSpeedChange={setSpeedRatio}
+            showSubtitle={preferences.showSubtitle}
+            onShowSubtitleChange={setShowSubtitle}
             report={report}
             reportLoading={reportLoading}
             reportError={reportError}
@@ -187,9 +286,13 @@ function App() {
             sentenceCount={speechStats.sentenceCount}
             onEndAndReport={() => void handleEndAndReport()}
           />
-        )}
-      </div>
-    </main>
+        ) : null}
+
+        {mainTab === "me" ? <MeView /> : null}
+      </main>
+
+      {!inChat ? <BottomTabBar active={mainTab} onChange={handleMainTabChange} /> : null}
+    </div>
   );
 }
 

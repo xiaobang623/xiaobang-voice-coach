@@ -1,7 +1,38 @@
 @import "tailwindcss";
 
+@theme {
+  --font-sans: "DM Sans", "Noto Sans SC", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+
+  --color-bg: #F3EDE4;
+  --color-bg-warm: #EAE2D6;
+  --color-surface: #FDFAF5;
+  --color-surface-raised: #FFFFFF;
+  --color-accent: #B8846E;
+  --color-accent-hover: #A67558;
+  --color-accent-soft: #E8D4C8;
+  --color-accent-muted: #D4B8A8;
+  --color-text: #2C2825;
+  --color-text-secondary: #5C5048;
+  --color-text-muted: #9A8B7E;
+  --color-border: #E5D9CC;
+  --color-border-subtle: #EDE5DA;
+  --color-error: #A65D52;
+  --color-error-bg: #F5E8E6;
+
+  --radius-card: 1.25rem;
+  --shadow-card: 0 2px 16px rgba(44, 40, 37, 0.06);
+  --shadow-elevated: 0 12px 40px rgba(44, 40, 37, 0.1);
+
+  --page-px: 1.25rem;
+  --page-max-w: 42rem;
+}
+
 :root {
-  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: var(--font-sans);
+  color: var(--color-text);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
 }
 
 * {
@@ -10,35 +41,57 @@
 
 body {
   margin: 0;
+  background-color: var(--color-bg);
+}
+
+.page-shell {
+  margin-inline: auto;
+  max-width: var(--page-max-w);
+  padding-inline: var(--page-px);
 }
 
 @keyframes session-breathe {
   0%,
   100% {
     transform: scale(1);
-    opacity: 0.35;
+    opacity: 0.4;
   }
   50% {
-    transform: scale(1.06);
-    opacity: 0.65;
+    transform: scale(1.08);
+    opacity: 0.75;
   }
 }
 
 @keyframes session-ripple {
   0% {
-    transform: scale(0.92);
-    opacity: 0.5;
+    transform: scale(0.9);
+    opacity: 0.55;
   }
   100% {
-    transform: scale(1.35);
+    transform: scale(1.4);
     opacity: 0;
   }
 }
 
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .session-breathe {
-  animation: session-breathe 3.2s ease-in-out infinite;
+  animation: session-breathe 3.4s ease-in-out infinite;
 }
 
 .session-ripple {
-  animation: session-ripple 2.4s ease-out infinite;
+  animation: session-ripple 2.6s ease-out infinite;
+}
+
+.animate-fade-up {
+  animation: fade-up 0.4s ease-out both;
 }

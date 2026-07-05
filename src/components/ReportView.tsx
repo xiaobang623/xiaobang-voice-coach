@@ -1,5 +1,7 @@
 import { useState } from "react";
 import type { Correction, CorrectionType, ReportJSON, UserLevel } from "../types";
+import { Badge } from "./ui/Badge";
+import { Card } from "./ui/Card";
 
 export interface ReportViewProps {
   report: ReportJSON | null;
@@ -49,10 +51,10 @@ const DIMENSION_ORDER: CorrectionType[] = [
 
 function StatCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-3xl bg-[#F5F1ED] p-5 text-center shadow-sm">
-      <p className="text-2xl font-semibold text-[#3D3D3D]">{value}</p>
-      <p className="mt-1 text-xs text-[#A89B8C]">{label}</p>
-    </div>
+    <Card variant="ghost" className="p-4 text-center">
+      <p className="text-2xl font-medium text-text">{value}</p>
+      <p className="mt-1 text-xs text-text-muted">{label}</p>
+    </Card>
   );
 }
 
@@ -64,34 +66,37 @@ function CorrectionCard({ correction }: { correction: Correction }) {
     <button
       type="button"
       onClick={() => setExpanded((value) => !value)}
-      className="w-full rounded-3xl bg-[#F5F1ED] p-5 text-left shadow-sm transition-shadow hover:shadow-md"
+      className="w-full text-left"
     >
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="rounded-full bg-[#E8D5C4] px-2.5 py-0.5 text-xs text-[#7C6B5D]">
-          {SEVERITY_LABEL[severity]}
-        </span>
-        {(correction.frequency ?? 1) > 1 ? (
-          <span className="text-xs text-[#A89B8C]">出现了 {correction.frequency} 次</span>
-        ) : null}
-      </div>
-      <p className="mt-3 text-sm text-[#8A7B6A] line-through decoration-[#C4998A]/60">
-        <span className="mr-1.5">❌</span>
-        {correction.original}
-      </p>
-      <p className="mt-1.5 text-[15px] font-medium text-[#3D3D3D]">
-        <span className="mr-1.5">✅</span>
-        {correction.corrected}
-      </p>
-      {expanded ? (
-        <div className="mt-3 border-t border-[#E8D5C4] pt-3 text-sm leading-relaxed text-[#7C6B5D]">
-          <p>{correction.explanation}</p>
-          {correction.example ? (
-            <p className="mt-2 text-[#A89B8C]">例：{correction.example}</p>
+      <Card
+        variant="elevated"
+        className="p-5 transition-shadow hover:shadow-elevated"
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge tone={severity === "critical" ? "accent" : "default"}>
+            {SEVERITY_LABEL[severity]}
+          </Badge>
+          {(correction.frequency ?? 1) > 1 ? (
+            <span className="text-xs text-text-muted">出现了 {correction.frequency} 次</span>
           ) : null}
         </div>
-      ) : (
-        <p className="mt-2 text-xs text-[#B5A997]">点一下看说明</p>
-      )}
+        <p className="mt-4 text-sm text-text-muted line-through decoration-accent-muted/70">
+          {correction.original}
+        </p>
+        <p className="mt-2 text-lg font-medium leading-snug text-text">
+          {correction.corrected}
+        </p>
+        {expanded ? (
+          <div className="mt-4 border-t border-border-subtle pt-4 text-sm leading-relaxed text-text-secondary">
+            <p>{correction.explanation}</p>
+            {correction.example ? (
+              <p className="mt-2 text-text-muted">例：{correction.example}</p>
+            ) : null}
+          </div>
+        ) : (
+          <p className="mt-3 text-xs text-text-muted">点一下看说明</p>
+        )}
+      </Card>
     </button>
   );
 }
@@ -107,34 +112,49 @@ export function ReportView({ report, wordCount, sentenceCount }: ReportViewProps
     items: report.corrections.filter((item) => item.type === type),
   })).filter((section) => section.items.length > 0);
 
+  const topCorrection = report.corrections[0] ?? null;
+
   return (
-    <section className="space-y-8 py-6">
-      <header>
-        <h2 className="text-xl font-medium text-[#3D3D3D]">今天聊得不错 ☕</h2>
-        <p className="mt-1 text-sm text-[#A89B8C]">
+    <section className="animate-fade-up space-y-8 py-2">
+      <header className="border-l-4 border-accent pl-4">
+        <p className="text-xs text-text-muted">本次复盘</p>
+        <h2 className="mt-2 text-2xl font-medium text-text">今天聊得不错</h2>
+        <p className="mt-2 text-sm text-text-muted">
           这次对话大概是
-          <span className="mx-1 font-medium text-[#7C6B5D]">
+          <span className="mx-1 font-medium text-text-secondary">
             {USER_LEVEL_LABEL[report.userLevel]}
           </span>
-          水平，下面是可以提升的地方
+          水平
         </p>
       </header>
 
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-3 gap-3">
         <StatCard label="聊天时长" value={formatDuration(report.durationSeconds)} />
         <StatCard label="说了多少词" value={wordCount != null ? String(wordCount) : "—"} />
         <StatCard label="说了几句话" value={sentenceCount != null ? String(sentenceCount) : "—"} />
       </div>
 
+      {topCorrection ? (
+        <Card variant="inset" className="border-l-4 border-l-accent p-5">
+          <p className="text-xs text-accent">今日最值得改</p>
+          <p className="mt-3 text-sm text-text-muted line-through decoration-accent-muted/70">
+            {topCorrection.original}
+          </p>
+          <p className="mt-2 text-xl font-medium text-text">
+            {topCorrection.corrected}
+          </p>
+        </Card>
+      ) : null}
+
       {grouped.length > 0 ? (
-        <div className="space-y-6">
+        <div className="space-y-8">
           {grouped.map((section) => (
             <div key={section.type}>
-              <h3 className="text-base font-medium text-[#7C6B5D]">
+              <h3 className="text-base font-medium text-text-secondary">
                 {section.meta.emoji} {section.meta.label}
               </h3>
-              <p className="mt-0.5 text-xs text-[#A89B8C]">{section.meta.description}</p>
-              <ul className="mt-3 space-y-3">
+              <p className="mt-0.5 text-xs text-text-muted">{section.meta.description}</p>
+              <ul className="mt-4 space-y-3">
                 {section.items.map((correction, index) => (
                   <li key={`${section.type}-${index}`}>
                     <CorrectionCard correction={correction} />
@@ -145,9 +165,9 @@ export function ReportView({ report, wordCount, sentenceCount }: ReportViewProps
           ))}
         </div>
       ) : (
-        <p className="rounded-3xl bg-[#F5F1ED] p-5 text-center text-sm text-[#A89B8C] shadow-sm">
-          这次没什么要改的，说得挺自然的 🎉
-        </p>
+        <Card variant="ghost" className="p-6 text-center text-sm text-text-muted">
+          这次没什么要改的，说得挺自然的
+        </Card>
       )}
     </section>
   );

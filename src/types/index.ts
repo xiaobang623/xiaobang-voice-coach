@@ -2,6 +2,8 @@ export interface TopicOption {
   id: string;
   title: string;
   description: string;
+  /** Shown in the chat screen so the user knows what to expect after picking a topic. */
+  openingHint?: string;
   /**
    * English guidance appended to the Coach's system_role so the opening line
    * actually sticks to the chosen topic. "" / undefined = free talk.
@@ -13,7 +15,8 @@ export interface TopicOption {
 export interface VoiceOption {
   id: string;
   label: string;
-  emoji: string;
+  /** @deprecated UI uses VoiceAvatar initials instead */
+  emoji?: string;
   /** true once confirmed to actually produce sound on the current account. */
   verified?: boolean;
 }
@@ -31,6 +34,13 @@ export interface SessionSettings {
   speedRatio: number;
   /** Full system_role for the Coach, already merged with the topic seed. */
   systemPrompt: string;
+}
+
+/** Saved practice defaults (voice / speed / subtitle). */
+export interface UserPreferences {
+  voiceType: string;
+  speedRatio: number;
+  showSubtitle: boolean;
 }
 
 export type CorrectionType =
@@ -60,4 +70,48 @@ export interface ReportJSON {
   durationSeconds: number;
   userLevel: UserLevel;
   corrections: Correction[];
+}
+
+/** Compact learner profile stored in memory.summary. */
+export interface MemorySummary {
+  userLevel: UserLevel;
+  topics: string[];
+  frequentMistakes: string[];
+  coachNotes: string;
+  updatedAt: string;
+}
+
+export interface FrequentMistakeStat {
+  original: string;
+  corrected: string;
+  type: CorrectionType;
+  count: number;
+}
+
+/** Aggregated growth metrics for the growth page. */
+export interface GrowthStats {
+  sessionCount: number;
+  totalDurationSeconds: number;
+  currentStreakDays: number;
+  longestStreakDays: number;
+  latestUserLevel: UserLevel | null;
+  frequentMistakes: FrequentMistakeStat[];
+}
+
+/** One past session report for the history list on the growth page. */
+export interface ReportHistoryItem {
+  sessionId: string;
+  createdAt: string;
+  topic: string | null;
+  durationSeconds: number;
+  userLevel: UserLevel;
+  correctionCount: number;
+  /** Loaded on demand when the user expands a history row. */
+  report?: ReportJSON;
+}
+
+/** Combined payload for the growth page (stats + lightweight history list). */
+export interface GrowthPageData {
+  stats: GrowthStats;
+  history: ReportHistoryItem[];
 }

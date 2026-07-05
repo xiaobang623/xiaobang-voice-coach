@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import type { Session, User } from "@supabase/supabase-js";
+import { invalidateGrowthCache } from "../core/growthCache";
 import { isSupabaseConfigured, supabase } from "../core/supabaseClient";
 
 export interface AuthContextValue {
@@ -239,6 +240,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!supabase) {
       return;
     }
+    invalidateGrowthCache();
     await supabase.auth.signOut();
     // Keep the app usable: drop straight back into a fresh anonymous session.
     await supabase.auth.signInAnonymously();

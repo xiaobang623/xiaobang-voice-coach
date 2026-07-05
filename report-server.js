@@ -29,6 +29,7 @@ function parseEnvLocalFile() {
 }
 
 import { SYSTEM_PROMPT, postProcessReport } from "./report-post-process.js";
+import { MEMORY_SYSTEM_PROMPT, postProcessMemory } from "./memory-post-process.js";
 
 const envLocal = parseEnvLocalFile();
 const apiKey = process.env.DEEPSEEK_API_KEY ?? envLocal.DEEPSEEK_API_KEY;
@@ -53,7 +54,87 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  if (req.method !== "POST" || req.url !== "/generate-report") {
+  if (req.method !== "POST") {
+    sendJson(res, 404, { error: "Not found" });
+    return;
+  }
+
+  if (req.url === "/extract-memory") {
+    if (!apiKey) {
+      sendJson(res, 500, { error: "DEEPSEEK_API_KEY is not configured in .env.local" });
+      return;
+    }
+
+    let body = "";
+    for await (const chunk of req) {
+      body += chunk;
+    }
+
+    let input;
+    try {
+      input = JSON.parse(body);
+    } catch {
+      sendJson(res, 400, { error: "Invalid JSON body" });
+      return;
+    }
+
+    if (!input.transcript?.trim()) {
+      sendJson(res, 400, { error: "transcript is required" });
+      return;
+    }
+
+    const previousBlock = input.previousSummary
+      ? `Previous profile:\n${JSON.stringify(input.previousSummary, null, 2)}\n\n`
+      : "";
+    const reportBlock = input.report
+      ? `Latest report:\n${JSON.stringify(input.report, null, 2)}\n\n`
+      : "";
+
+    try {
+      const deepseekResponse = await fetch("https://api.deepseek.com/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: "deepseek-chat",
+          temperature: 0.2,
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: MEMORY_SYSTEM_PROMPT },
+            {
+              role: "user",
+              content: `${previousBlock}${reportBlock}Transcript:\n${input.transcript}`,
+            },
+          ],
+        }),
+      });
+
+      if (!deepseekResponse.ok) {
+        const detail = await deepseekResponse.text();
+        sendJson(res, 502, { error: "DeepSeek request failed", detail });
+        return;
+      }
+
+      const completion = await deepseekResponse.json();
+      const content = completion?.choices?.[0]?.message?.content;
+      if (!content || typeof content !== "string") {
+        sendJson(res, 502, { error: "Empty model response" });
+        return;
+      }
+
+      const raw = JSON.parse(content);
+      sendJson(res, 200, postProcessMemory(raw));
+    } catch (error) {
+      sendJson(res, 500, {
+        error: error instanceof Error ? error.message : "Memory extraction failed",
+      });
+    }
+    return;
+  }
+
+  if (req.url !== "/generate-report") {
     sendJson(res, 404, { error: "Not found" });
     return;
   }

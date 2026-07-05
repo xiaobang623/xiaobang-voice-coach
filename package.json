@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "proxy": "node proxy.js",
     "start": "node proxy.js",
-    "report-server": "node report-server.js"
+    "report-server": "node report-server.js",
+    "db:migrate": "node scripts/db-migrate.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.110.0",

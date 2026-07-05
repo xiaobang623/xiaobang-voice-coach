@@ -1,4 +1,4 @@
-import type { SpeedOption, VoiceOption } from "../types";
+import type { MemorySummary, SpeedOption, VoiceOption } from "../types";
 
 /**
  * S2S-Omni (O2.0) official voices for volc.speech.dialog.
@@ -6,10 +6,10 @@ import type { SpeedOption, VoiceOption } from "../types";
  * with model 1.2.1.1; other voice_type ids silently fall back to vv.
  */
 export const VOICE_OPTIONS: VoiceOption[] = [
-  { id: "zh_female_vv_jupiter_bigtts", label: "Vivi", emoji: "🌸" },
-  { id: "zh_female_xiaohe_jupiter_bigtts", label: "小何", emoji: "👩" },
-  { id: "zh_male_yunzhou_jupiter_bigtts", label: "云舟（男）", emoji: "🧑" },
-  { id: "zh_male_xiaotian_jupiter_bigtts", label: "小天（男）", emoji: "👦" },
+  { id: "zh_female_vv_jupiter_bigtts", label: "Vivi" },
+  { id: "zh_female_xiaohe_jupiter_bigtts", label: "小何" },
+  { id: "zh_male_yunzhou_jupiter_bigtts", label: "云舟（男）" },
+  { id: "zh_male_xiaotian_jupiter_bigtts", label: "小天（男）" },
 ];
 
 export const DEFAULT_VOICE_TYPE = "zh_female_vv_jupiter_bigtts";
@@ -28,13 +28,46 @@ const BASE_SYSTEM_ROLE =
   "You are a friendly English speaking coach. Keep responses natural and conversational.";
 
 /**
- * Merge the base persona with the selected topic's promptSeed so the Coach's
- * first line sticks to the chosen topic. No seed => free-talk / general opener.
+ * Merge the base persona with the selected topic's promptSeed and optional
+ * learner memory so the Coach can personalize without breaking the topic opener.
  */
-export function buildSystemPrompt(promptSeed?: string): string {
+export function buildSystemPrompt(promptSeed?: string, memory?: MemorySummary | null): string {
   const seed = promptSeed?.trim();
-  if (!seed) {
-    return `${BASE_SYSTEM_ROLE} Open by warmly greeting the user and inviting them to chat about anything on their mind.`;
+  const topicLine = seed
+    ? `For this session, ${seed}`
+    : "Open by warmly greeting the user and inviting them to chat about anything on their mind.";
+
+  const memoryBlock = formatMemoryBlock(memory);
+  if (!memoryBlock) {
+    return `${BASE_SYSTEM_ROLE} ${topicLine}`;
   }
-  return `${BASE_SYSTEM_ROLE} For this session, ${seed}`;
+
+  return `${BASE_SYSTEM_ROLE} ${memoryBlock} ${topicLine}`;
+}
+
+function formatMemoryBlock(memory?: MemorySummary | null): string {
+  if (!memory) {
+    return "";
+  }
+
+  const parts: string[] = [];
+  parts.push(`You have spoken with this learner before (level: ${memory.userLevel}).`);
+
+  if (memory.topics.length > 0) {
+    parts.push(`They enjoy talking about: ${memory.topics.join(", ")}.`);
+  }
+
+  if (memory.frequentMistakes.length > 0) {
+    parts.push(`Gently watch for: ${memory.frequentMistakes.join("; ")}.`);
+  }
+
+  if (memory.coachNotes.trim()) {
+    parts.push(memory.coachNotes.trim());
+  }
+
+  parts.push(
+    "Weave this in naturally — do not list these facts aloud or sound like you are reading a file.",
+  );
+
+  return parts.join(" ");
 }

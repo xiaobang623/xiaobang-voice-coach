@@ -1,4 +1,7 @@
 import type { TopicOption } from "../types";
+import { TOPIC_TAG } from "../config/topics";
+import { Button } from "./ui/Button";
+import { Card } from "./ui/Card";
 
 export interface TopicSelectorProps {
   topics: TopicOption[];
@@ -6,43 +9,51 @@ export interface TopicSelectorProps {
   onFreeTalk: () => void;
 }
 
-const TOPIC_EMOJI: Record<string, string> = {
-  travel: "🧳",
-  food: "🍜",
-  work: "💼",
-  movie: "🎬",
-  daily: "🌤️",
-};
-
 export function TopicSelector({ topics, onSelectTopic, onFreeTalk }: TopicSelectorProps) {
   return (
-    <section className="py-6">
-      <h2 className="text-xl font-medium text-[#3D3D3D]">今天想聊点什么？</h2>
-      <p className="mt-1 text-sm text-[#A89B8C]">挑一个话题，或者随便聊聊都行</p>
+    <section className="animate-fade-up py-4">
+      <header className="mb-6">
+        <h2 className="text-xl font-semibold text-text">今天想聊点什么？</h2>
+        <p className="mt-2 text-sm leading-relaxed text-text-muted">
+          挑一个话题轻松开场，或者直接自由畅聊
+        </p>
+      </header>
 
-      <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {topics.map((topic) => (
-          <button
-            key={topic.id}
-            type="button"
-            onClick={() => onSelectTopic(topic.id)}
-            className="rounded-3xl bg-[#FFF9F3] p-5 text-left shadow-md transition-transform hover:scale-[1.03] hover:shadow-lg active:scale-[0.99]"
-          >
-            <span className="text-2xl">{TOPIC_EMOJI[topic.id] ?? "💬"}</span>
-            <h3 className="mt-3 text-base font-medium text-[#3D3D3D]">{topic.title}</h3>
-            <p className="mt-1 text-sm leading-relaxed text-[#A89B8C]">{topic.description}</p>
-          </button>
-        ))}
+      <div className="grid grid-cols-2 items-start gap-3">
+        {topics.map((topic, index) => {
+          const tag = TOPIC_TAG[topic.id];
+          return (
+            <button
+              key={topic.id}
+              type="button"
+              onClick={() => onSelectTopic(topic.id)}
+              className="group w-full text-left"
+              style={{ animationDelay: `${index * 60}ms` }}
+            >
+              <Card
+                variant="elevated"
+                className="p-3.5 transition-all duration-200 group-hover:-translate-y-0.5 group-hover:shadow-elevated group-active:scale-[0.99]"
+              >
+                {tag ? (
+                  <span
+                    className={`inline-flex w-fit rounded-full px-2 py-0.5 text-[11px] font-medium ${tag.tint}`}
+                  >
+                    {tag.label}
+                  </span>
+                ) : null}
+                <h3 className="mt-2 text-sm font-semibold leading-snug text-text">{topic.title}</h3>
+                <p className="mt-1 text-xs leading-relaxed text-text-muted">{topic.description}</p>
+              </Card>
+            </button>
+          );
+        })}
       </div>
 
-      <div className="mt-6 flex justify-center">
-        <button
-          type="button"
-          onClick={onFreeTalk}
-          className="rounded-full bg-[#7C6B5D] px-8 py-3 text-sm font-medium text-[#FAF8F3] shadow-md transition-transform hover:scale-105 active:scale-95"
-        >
-          不挑了，聊一会儿英语吧
-        </button>
+      <div className="mt-6 flex w-full flex-col items-center gap-2">
+        <Button variant="primary" size="lg" fullWidth onClick={onFreeTalk}>
+          不挑了，直接开聊
+        </Button>
+        <p className="text-center text-xs text-text-muted">没有固定话题，想到什么说什么</p>
       </div>
     </section>
   );
