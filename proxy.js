@@ -87,7 +87,29 @@ function rewriteStartSessionFrame(data, isBinary) {
       ? { ...normalized.extra }
       : {};
 
-  // Force TTS output to PCM to avoid garbled playback on frontend.
+  // Read voice from tts.speaker (O2.0 dialog) or legacy audio_config.voice_type.
+  const incomingTts =
+    normalized.tts && typeof normalized.tts === "object" ? normalized.tts : {};
+  const incomingAudioConfig =
+    incomingTts.audio_config && typeof incomingTts.audio_config === "object"
+      ? incomingTts.audio_config
+      : {};
+
+  const speaker =
+    incomingTts.speaker ??
+    incomingAudioConfig.voice_type ??
+    "zh_female_vv_jupiter_bigtts";
+
+  // Force PCM container (playback depends on it); honor frontend speed when set.
+  const audioConfig = {
+    format: "pcm_s16le",
+    sample_rate: 16000,
+    channel: 1,
+  };
+  if (incomingAudioConfig.speed_ratio != null) {
+    audioConfig.speed_ratio = incomingAudioConfig.speed_ratio;
+  }
+
   const nextPayload = {
     ...normalized,
     extra: {
@@ -95,12 +117,8 @@ function rewriteStartSessionFrame(data, isBinary) {
       input_mod: "keep_alive",
     },
     tts: {
-      audio_config: {
-        format: "pcm_s16le",
-        sample_rate: 16000,
-        channel: 1,
-        voice_type: "zh_female_1", // TTS 音色选择
-      },
+      speaker,
+      audio_config: audioConfig,
     },
   };
 
@@ -235,6 +253,14 @@ wss.on("connection", (clientSocket) => {
 
   clientSocket.on("message", (data, isBinary) => {
     const rewritten = rewriteStartSessionFrame(data, isBinary);
+    if (rewritten) {
+      const ac = rewritten.payload?.tts ?? {};
+      console.log(
+        `[proxy] start-session tts injected: speaker=${ac.speaker ?? "(missing)"} speed_ratio=${
+          ac.audio_config?.speed_ratio ?? "(server default)"
+        }`,
+      );
+    }
 
     const outgoingData = rewritten ? rewritten.frame : data;
     if (upstreamSocket.readyState === WebSocket.OPEN) {

@@ -5,6 +5,15 @@ import { TtsPcmPlayer } from "./ttsPcmPlayer";
 
 export type VoiceSessionStatus = "connecting" | "active" | "ended";
 
+/** Per-session personalization passed into `start()`. */
+export interface VoiceStartOptions {
+  voiceType?: string;
+  speedRatio?: number;
+  systemPrompt?: string;
+  /** Dev typing-test mode: connect without opening the microphone. */
+  typingTestMode?: boolean;
+}
+
 export interface VoiceSessionMessage {
   id: string;
   role: "user" | "bot";
@@ -21,7 +30,9 @@ export interface UseVoiceSessionResult {
   startedAt: number | null;
   /** When the current conversation thread began (survives reconnects). */
   conversationStartedAt: number | null;
-  start: () => Promise<void>;
+  start: (options?: VoiceStartOptions) => Promise<void>;
+  /** Dev typing-test: send text instead of speaking (ChatTextQuery). */
+  sendTextQuery: (text: string) => void;
   /** End the live voice link but keep on-screen messages. */
   stop: () => void;
   /** Wipe messages and reset — only when leaving the chat view. */
@@ -249,10 +260,12 @@ export function useVoiceSession(): UseVoiceSessionResult {
     });
   }, []);
 
-  const start = useCallback(async () => {
+  const start = useCallback(async (options?: VoiceStartOptions) => {
     if (statusRef.current === "connecting" || statusRef.current === "active") {
       return;
     }
+
+    const skipMic = options?.typingTestMode === true;
 
     setErrorMessage(null);
     statusRef.current = "connecting";
@@ -294,81 +307,87 @@ export function useVoiceSession(): UseVoiceSessionResult {
       await adapter.connect({
         sessionId: crypto.randomUUID(),
         token: "",
+        voiceType: options?.voiceType,
+        speedRatio: options?.speedRatio,
+        systemPrompt: options?.systemPrompt,
       });
 
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          channelCount: 1,
-          sampleRate: 16000,
-          echoCancellation: true,
-          noiseSuppression: true,
-        },
-      });
-      streamRef.current = stream;
+      if (!skipMic) {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            channelCount: 1,
+            sampleRate: 16000,
+            echoCancellation: true,
+            noiseSuppression: true,
+          },
+        });
+        streamRef.current = stream;
 
-      const mediaRecorder = new MediaRecorder(stream);
-      mediaRecorder.start(250);
-      mediaRecorderRef.current = mediaRecorder;
+        const mediaRecorder = new MediaRecorder(stream);
+        mediaRecorder.start(250);
+        mediaRecorderRef.current = mediaRecorder;
 
-      const audioContext = new AudioContext();
-      audioContextRef.current = audioContext;
+        const audioContext = new AudioContext();
+        audioContextRef.current = audioContext;
 
-      const source = audioContext.createMediaStreamSource(stream);
-      sourceNodeRef.current = source;
+        const source = audioContext.createMediaStreamSource(stream);
+        sourceNodeRef.current = source;
 
-      const processor = audioContext.createScriptProcessor(4096, 1, 1);
-      processorNodeRef.current = processor;
-      processor.onaudioprocess = (audioEvent) => {
-        if (statusRef.current !== "active" || !adapterRef.current) {
-          return;
-        }
-
-        const input = audioEvent.inputBuffer.getChannelData(0);
-        let sumSquares = 0;
-        for (let i = 0; i < input.length; i += 1) {
-          sumSquares += input[i] * input[i];
-        }
-        const rms = Math.sqrt(sumSquares / input.length);
-        const now = performance.now();
-        const isVoiceActive = rms > SILENCE_RMS_THRESHOLD;
-
-        if (!isVoiceActive) {
-          const silenceDuration = now - lastVoiceAtRef.current;
-          if (
-            hasVoiceSinceEndAsrRef.current &&
-            !endAsrSentForSilenceRef.current &&
-            silenceDuration >= SILENCE_END_ASR_MS
-          ) {
-            adapterRef.current.endAsr("silence");
-            endAsrSentForSilenceRef.current = true;
-            hasVoiceSinceEndAsrRef.current = false;
+        const processor = audioContext.createScriptProcessor(4096, 1, 1);
+        processorNodeRef.current = processor;
+        processor.onaudioprocess = (audioEvent) => {
+          if (statusRef.current !== "active" || !adapterRef.current) {
+            return;
           }
-          return;
-        }
 
-        lastVoiceAtRef.current = now;
+          const input = audioEvent.inputBuffer.getChannelData(0);
+          let sumSquares = 0;
+          for (let i = 0; i < input.length; i += 1) {
+            sumSquares += input[i] * input[i];
+          }
+          const rms = Math.sqrt(sumSquares / input.length);
+          const now = performance.now();
+          const isVoiceActive = rms > SILENCE_RMS_THRESHOLD;
+
+          if (!isVoiceActive) {
+            const silenceDuration = now - lastVoiceAtRef.current;
+            if (
+              hasVoiceSinceEndAsrRef.current &&
+              !endAsrSentForSilenceRef.current &&
+              silenceDuration >= SILENCE_END_ASR_MS
+            ) {
+              adapterRef.current.endAsr("silence");
+              endAsrSentForSilenceRef.current = true;
+              hasVoiceSinceEndAsrRef.current = false;
+            }
+            return;
+          }
+
+          lastVoiceAtRef.current = now;
+          endAsrSentForSilenceRef.current = false;
+
+          const pcm = downsampleTo16k(input, audioEvent.inputBuffer.sampleRate);
+          const chunk = pcm.buffer.slice(
+            pcm.byteOffset,
+            pcm.byteOffset + pcm.byteLength,
+          ) as ArrayBuffer;
+          adapterRef.current.sendAudio(chunk);
+          hasVoiceSinceEndAsrRef.current = true;
+        };
+
+        const silent = audioContext.createGain();
+        silent.gain.value = 0;
+        gainNodeRef.current = silent;
+
+        source.connect(processor);
+        processor.connect(silent);
+        silent.connect(audioContext.destination);
+
+        lastVoiceAtRef.current = performance.now();
         endAsrSentForSilenceRef.current = false;
+        hasVoiceSinceEndAsrRef.current = false;
+      }
 
-        const pcm = downsampleTo16k(input, audioEvent.inputBuffer.sampleRate);
-        const chunk = pcm.buffer.slice(
-          pcm.byteOffset,
-          pcm.byteOffset + pcm.byteLength,
-        ) as ArrayBuffer;
-        adapterRef.current.sendAudio(chunk);
-        hasVoiceSinceEndAsrRef.current = true;
-      };
-
-      const silent = audioContext.createGain();
-      silent.gain.value = 0;
-      gainNodeRef.current = silent;
-
-      source.connect(processor);
-      processor.connect(silent);
-      silent.connect(audioContext.destination);
-
-      lastVoiceAtRef.current = performance.now();
-      endAsrSentForSilenceRef.current = false;
-      hasVoiceSinceEndAsrRef.current = false;
       statusRef.current = "active";
       const now = Date.now();
       setStartedAt(now);
@@ -391,6 +410,26 @@ export function useVoiceSession(): UseVoiceSessionResult {
     teardownConnection,
   ]);
 
+  const sendTextQuery = useCallback((text: string) => {
+    const content = text.trim();
+    if (!content || statusRef.current !== "active" || !adapterRef.current) {
+      return;
+    }
+
+    setMessages((previous) => [
+      ...previous,
+      {
+        id: crypto.randomUUID(),
+        role: "user" as const,
+        text: content,
+        isFinal: true,
+        timestamp: Date.now(),
+      },
+    ]);
+
+    adapterRef.current.sendTextQuery(content);
+  }, []);
+
   useEffect(() => {
     return () => {
       teardownAll();
@@ -405,6 +444,7 @@ export function useVoiceSession(): UseVoiceSessionResult {
     startedAt,
     conversationStartedAt,
     start,
+    sendTextQuery,
     stop,
     clearConversation,
   };

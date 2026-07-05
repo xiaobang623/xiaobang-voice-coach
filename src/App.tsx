@@ -7,28 +7,41 @@ import {
   generateReport,
 } from "./core/report";
 import { useVoiceSession } from "./hooks/useVoiceSession";
-import type { ReportJSON, TopicOption } from "./types";
+import {
+  buildSystemPrompt,
+  DEFAULT_SPEED_RATIO,
+  DEFAULT_VOICE_TYPE,
+} from "./config/session";
+import type { ReportJSON, SessionSettings, TopicOption } from "./types";
 
 const TOPICS: TopicOption[] = [
   {
     id: "daily",
     title: "今天过得怎么样",
     description: "从日常小事聊起，最放松的开场",
+    promptSeed:
+      "start by asking the user how their day has been and gently keep the small talk going.",
   },
   {
     id: "travel",
     title: "想去的地方",
     description: "聊聊旅行计划，或者印象最深的一次出行",
+    promptSeed:
+      "start by asking where the user would love to travel next, or their most memorable trip.",
   },
   {
     id: "food",
     title: "吃点什么好",
     description: "推荐一家店、一道菜，或者自己做饭的故事",
+    promptSeed:
+      "start by asking the user about food they love — a favorite dish, restaurant, or cooking they do.",
   },
   {
     id: "work",
     title: "工作与生活",
     description: "最近在忙什么，有什么想吐槽或分享的",
+    promptSeed:
+      "start by asking what the user has been busy with at work lately and how they feel about it.",
   },
 ];
 
@@ -40,10 +53,34 @@ function App() {
   const [reportError, setReportError] = useState<string | null>(null);
   const sessionIdRef = useRef(crypto.randomUUID());
 
+  // Session personalization (voice / speed / topic).
+  const [voiceType, setVoiceType] = useState(DEFAULT_VOICE_TYPE);
+  const [speedRatio, setSpeedRatio] = useState(DEFAULT_SPEED_RATIO);
+  const [topicId, setTopicId] = useState<string | null>(null);
+
   const speechStats = useMemo(
     () => countUserSpeechStats(voice.messages),
     [voice.messages],
   );
+
+  const sessionSettings = useMemo<SessionSettings>(() => {
+    const topic = TOPICS.find((t) => t.id === topicId);
+    return {
+      voiceType,
+      speedRatio,
+      systemPrompt: buildSystemPrompt(topic?.promptSeed),
+    };
+  }, [voiceType, speedRatio, topicId]);
+
+  const handleSelectTopic = useCallback((selectedTopicId: string) => {
+    setTopicId(selectedTopicId);
+    setView("chat");
+  }, []);
+
+  const handleFreeTalk = useCallback(() => {
+    setTopicId(null);
+    setView("chat");
+  }, []);
 
   const handleExitChat = useCallback(() => {
     voice.clearConversation();
@@ -83,6 +120,13 @@ function App() {
     }
   }, [voice]);
 
+  const sessionLabel = useMemo(() => {
+    if (!topicId) {
+      return "自由畅聊";
+    }
+    return TOPICS.find((t) => t.id === topicId)?.title ?? "自由畅聊";
+  }, [topicId]);
+
   return (
     <main className="min-h-screen bg-[#FAF8F3] text-[#3D3D3D]">
       <div className="mx-auto max-w-2xl px-6 py-8">
@@ -102,12 +146,18 @@ function App() {
         {view === "topics" ? (
           <TopicSelector
             topics={TOPICS}
-            onSelectTopic={() => setView("chat")}
-            onFreeTalk={() => setView("chat")}
+            onSelectTopic={handleSelectTopic}
+            onFreeTalk={handleFreeTalk}
           />
         ) : (
           <VoiceSession
             voice={voice}
+            settings={sessionSettings}
+            sessionLabel={sessionLabel}
+            voiceType={voiceType}
+            onVoiceChange={setVoiceType}
+            speedRatio={speedRatio}
+            onSpeedChange={setSpeedRatio}
             report={report}
             reportLoading={reportLoading}
             reportError={reportError}

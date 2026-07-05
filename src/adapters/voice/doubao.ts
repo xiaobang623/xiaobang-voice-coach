@@ -33,7 +33,9 @@ const enum EventSend {
   StartSession = 100,
   FinishSession = 102,
   TaskRequest = 200,
+  SayHello = 300,
   EndASR = 400,
+  ChatTextQuery = 501,
 }
 
 const enum EventReceive {
@@ -152,6 +154,40 @@ export class DoubaoVoiceAdapter implements VoiceAdapter {
 
     try {
       const frame = this.buildJsonEventPayload(EventSend.EndASR, {});
+      this.socket.send(frame);
+    } catch (error) {
+      this.emitError(error);
+    }
+  }
+
+  sendTextQuery(text: string): void {
+    const content = text.trim();
+    if (!content) {
+      return;
+    }
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN || !this.config) {
+      return;
+    }
+
+    try {
+      const frame = this.buildJsonEventPayload(EventSend.ChatTextQuery, { content });
+      this.socket.send(frame);
+    } catch (error) {
+      this.emitError(error);
+    }
+  }
+
+  sayHello(text: string): void {
+    const content = text.trim();
+    if (!content) {
+      return;
+    }
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN || !this.config) {
+      return;
+    }
+
+    try {
+      const frame = this.buildJsonEventPayload(EventSend.SayHello, { content });
       this.socket.send(frame);
     } catch (error) {
       this.emitError(error);
@@ -442,11 +478,32 @@ export class DoubaoVoiceAdapter implements VoiceAdapter {
   }
 
   private buildStartSessionMeta(): Record<string, unknown> {
+    const systemRole =
+      this.config?.systemPrompt?.trim() ||
+      "You are a friendly English speaking coach. Keep responses natural and conversational.";
+
+    // Explicitly request PCM output; default server output may be ogg_opus.
+    const audioConfig: Record<string, unknown> = {
+      format: "pcm_s16le",
+      sample_rate: TTS_SAMPLE_RATE,
+      channel: 1,
+    };
+    if (typeof this.config?.speedRatio === "number") {
+      audioConfig.speed_ratio = this.config.speedRatio;
+    }
+
+    const tts: Record<string, unknown> = {
+      audio_config: audioConfig,
+    };
+    // O2.0 dialog voices use tts.speaker (NOT audio_config.voice_type).
+    if (this.config?.voiceType) {
+      tts.speaker = this.config.voiceType;
+    }
+
     return {
       dialog: {
         bot_name: "Xiaobang Coach",
-        system_role:
-          "You are a friendly English speaking coach. Keep responses natural and conversational.",
+        system_role: systemRole,
         extra: {
           model: "1.2.1.1",
         },
@@ -456,14 +513,7 @@ export class DoubaoVoiceAdapter implements VoiceAdapter {
         input_mod: "keep_alive",
       },
       asr: {},
-      // Explicitly request PCM output; default server output may be ogg_opus.
-      tts: {
-        audio_config: {
-          format: "pcm_s16le",
-          sample_rate: TTS_SAMPLE_RATE,
-          channel: 1,
-        },
-      },
+      tts,
     };
   }
 
@@ -472,7 +522,9 @@ export class DoubaoVoiceAdapter implements VoiceAdapter {
     const shouldIncludeSessionId =
       event === EventSend.StartSession ||
       event === EventSend.FinishSession ||
-      event === EventSend.EndASR;
+      event === EventSend.EndASR ||
+      event === EventSend.SayHello ||
+      event === EventSend.ChatTextQuery;
     const sessionBytes =
       shouldIncludeSessionId && this.config
         ? new TextEncoder().encode(this.config.sessionId)
