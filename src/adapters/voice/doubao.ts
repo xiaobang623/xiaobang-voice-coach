@@ -209,10 +209,16 @@ export class DoubaoVoiceAdapter implements VoiceAdapter {
       socket.send(frame);
     };
 
-    socket.onmessage = async (event: MessageEvent<Blob | ArrayBuffer | string>) => {
+    socket.onmessage = (event: MessageEvent<Blob | ArrayBuffer | string>) => {
       try {
-        const data = await this.normalizeMessageData(event.data);
-        this.handleBinaryMessage(data);
+        if (event.data instanceof ArrayBuffer) {
+          this.handleBinaryMessage(event.data);
+          return;
+        }
+
+        void this.normalizeMessageData(event.data).then((data) => {
+          this.handleBinaryMessage(data);
+        });
       } catch (error) {
         this.emitError(error);
       }

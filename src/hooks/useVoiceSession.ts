@@ -224,9 +224,15 @@ export function useVoiceSession(): UseVoiceSessionResult {
       }
 
       if (!last.isFinal && event.isFinal) {
+        // User finished speaking — clear any stale bot audio before the next reply.
+        ttsPlayerRef.current?.reset();
         const next = [...previous];
         next[realIdx] = { ...message, id: last.id };
         return next;
+      }
+
+      if (event.isFinal) {
+        ttsPlayerRef.current?.reset();
       }
 
       return [...previous, message];
@@ -243,9 +249,6 @@ export function useVoiceSession(): UseVoiceSessionResult {
           { ...last, text: event.text, isFinal: event.isFinal, timestamp: event.timestamp },
         ];
       }
-
-      // New bot turn — reset TTS schedule so audio does not overlap previous reply.
-      ttsPlayerRef.current?.reset();
 
       return [
         ...previous,
@@ -428,6 +431,7 @@ export function useVoiceSession(): UseVoiceSessionResult {
     ]);
 
     adapterRef.current.sendTextQuery(content);
+    ttsPlayerRef.current?.reset();
   }, []);
 
   useEffect(() => {

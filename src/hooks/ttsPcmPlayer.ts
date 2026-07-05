@@ -1,13 +1,19 @@
 /** Smooth PCM s16le playback for streaming TTS chunks from Doubao. */
 const BYTES_PER_SAMPLE = 2;
-/** Buffer ~120ms before first playback to absorb network jitter between frames. */
-const MIN_PRIME_MS = 120;
+/** Initial buffer before first playback — extra headroom for proxy + mobile jitter. */
+const MIN_PRIME_MS = 220;
+/** Keep this much audio scheduled ahead of the playhead when chunks keep arriving. */
+const TARGET_AHEAD_MS = 320;
+/** Schedule in small blocks so one late frame does not stall the whole pending buffer. */
+const SCHEDULE_CHUNK_MS = 40;
 
 export class TtsPcmPlayer {
   private pending = new Uint8Array(0);
   private nextPlayTime = 0;
   private primed = false;
   private readonly minPrimeBytes: number;
+  private readonly scheduleChunkBytes: number;
+  private readonly activeSources = new Set<AudioBufferSourceNode>();
 
   constructor(
     private readonly ctx: AudioContext,
@@ -15,6 +21,8 @@ export class TtsPcmPlayer {
   ) {
     this.nextPlayTime = ctx.currentTime;
     this.minPrimeBytes = Math.floor((sampleRate * BYTES_PER_SAMPLE * MIN_PRIME_MS) / 1000);
+    this.scheduleChunkBytes =
+      Math.max(2, Math.floor((sampleRate * BYTES_PER_SAMPLE * SCHEDULE_CHUNK_MS) / 1000)) & ~1;
   }
 
   enqueue(chunk: ArrayBuffer): void {
@@ -32,34 +40,60 @@ export class TtsPcmPlayer {
     combined.set(incoming, this.pending.length);
     this.pending = combined;
 
-    if (!this.primed && this.pending.length < this.minPrimeBytes) {
-      return;
-    }
-    this.primed = true;
-
-    this.flushPlayable();
+    this.schedulePipeline();
   }
 
-  /** Call when a new bot spoken response begins so stale audio does not overlap. */
+  /** Stop queued/scheduled audio — use at user turn boundaries, not on bot text chunks. */
   reset(): void {
+    for (const source of this.activeSources) {
+      try {
+        source.stop();
+      } catch {
+        // Already stopped or never started.
+      }
+    }
+    this.activeSources.clear();
     this.pending = new Uint8Array(0);
     this.primed = false;
     this.nextPlayTime = this.ctx.currentTime;
   }
 
-  private flushPlayable(): void {
-    const evenLen = this.pending.length & ~1;
-    if (evenLen === 0) {
-      return;
-    }
+  private schedulePipeline(): void {
+    while (true) {
+      const evenPending = this.pending.length & ~1;
+      if (evenPending < 2) {
+        return;
+      }
 
-    const playable = this.pending.slice(0, evenLen);
-    this.pending = this.pending.slice(evenLen);
+      if (!this.primed) {
+        if (evenPending < this.minPrimeBytes) {
+          return;
+        }
+        this.primed = true;
+      }
+
+      const aheadMs = (this.nextPlayTime - this.ctx.currentTime) * 1000;
+      if (aheadMs >= TARGET_AHEAD_MS) {
+        return;
+      }
+
+      // Flush a short tail once the playhead is close to running dry.
+      const take =
+        evenPending <= this.scheduleChunkBytes && aheadMs < 80
+          ? evenPending
+          : Math.min(evenPending, this.scheduleChunkBytes);
+      this.scheduleChunk(take);
+    }
+  }
+
+  private scheduleChunk(byteLength: number): void {
+    const playable = this.pending.slice(0, byteLength);
+    this.pending = this.pending.slice(byteLength);
 
     const samples = new Int16Array(
       playable.buffer,
       playable.byteOffset,
-      evenLen / BYTES_PER_SAMPLE,
+      byteLength / BYTES_PER_SAMPLE,
     );
     const floats = new Float32Array(samples.length);
     for (let i = 0; i < samples.length; i += 1) {
@@ -74,13 +108,19 @@ export class TtsPcmPlayer {
     source.connect(this.ctx.destination);
 
     const now = this.ctx.currentTime;
-    // Catch up if scheduling fell behind (e.g. chunk arrived late).
-    if (this.nextPlayTime < now - 0.08) {
+    // Small underrun: chain immediately. Large gap: jump playhead to avoid compounding delay.
+    if (this.nextPlayTime < now - 0.15) {
       this.nextPlayTime = now;
     }
 
     const startTime = Math.max(now, this.nextPlayTime);
     source.start(startTime);
     this.nextPlayTime = startTime + buffer.duration;
+
+    this.activeSources.add(source);
+    source.onended = () => {
+      this.activeSources.delete(source);
+      this.schedulePipeline();
+    };
   }
 }
