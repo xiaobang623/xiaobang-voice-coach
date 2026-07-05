@@ -24,7 +24,7 @@ export function AccountPanel({ onAuthenticated }: AccountPanelProps) {
     signOut,
   } = useAuth();
 
-  const [mode, setMode] = useState<AuthMode>("signup");
+  const [mode, setMode] = useState<AuthMode>("login");
   const [nicknameValue, setNicknameValue] = useState("");
   const [emailValue, setEmailValue] = useState("");
   const [password, setPassword] = useState("");
@@ -106,24 +106,18 @@ export function AccountPanel({ onAuthenticated }: AccountPanelProps) {
   return (
     <section className="space-y-5">
       <p className="text-sm leading-relaxed text-text-muted">
-        不登录也可以去「练习」随便聊，但记录和成长记忆不会保存。注册后小榜会记住你。
+        不登录也能去「练习」随便聊。登录后可保存复盘记录、成长数据和 Coach 记忆。
       </p>
 
       <SegmentedTabs
         ariaLabel="账号操作"
         tabs={[
-          { id: "signup", label: "注册" },
           { id: "login", label: "登录" },
+          { id: "signup", label: "注册" },
         ]}
         active={mode}
         onChange={switchMode}
       />
-
-      <p className="text-sm text-text-muted">
-        {mode === "signup"
-          ? "注册时设置昵称，练习记录和成长记忆都会绑定到这个账号。"
-          : "登录后取回你的昵称、历史复盘和 Coach 记忆。"}
-      </p>
 
       <form className="space-y-3" onSubmit={(event) => void handleSubmit(event)}>
         {mode === "signup" ? (

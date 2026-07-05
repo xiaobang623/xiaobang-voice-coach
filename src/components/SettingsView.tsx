@@ -41,7 +41,7 @@ export function SettingsView({ onOpenAccount }: SettingsViewProps) {
   const displayName = nickname?.trim();
 
   const accountHint = isAnonymous
-    ? "未登录 · 记录不会保存"
+    ? "未登录 · 点击登录或注册"
     : displayName
       ? `${displayName} · ${email ?? ""}`
       : (email ?? "已登录");

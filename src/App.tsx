@@ -73,6 +73,7 @@ function App() {
   const sessionIdRef = useRef(crypto.randomUUID());
 
   const [topicId, setTopicId] = useState<string | null>(null);
+  const [accountDeepLink, setAccountDeepLink] = useState(0);
 
   const inChat = practiceScreen === "chat";
 
@@ -224,6 +225,11 @@ function App() {
     setMainTab(tab);
   }, [inChat]);
 
+  const handleGoToAccount = useCallback(() => {
+    setMainTab("me");
+    setAccountDeepLink((count) => count + 1);
+  }, []);
+
   return (
     <div className="min-h-screen bg-bg text-text">
       <header className="sticky top-0 z-30 border-b border-border-subtle/70 bg-bg/90 backdrop-blur-xl">
@@ -255,9 +261,19 @@ function App() {
         {mainTab === "practice" && practiceScreen === "topics" ? (
           <>
             {isConfigured && isAnonymous ? (
-              <p className="mb-5 rounded-2xl border border-border-subtle bg-surface px-4 py-3 text-xs leading-relaxed text-text-muted">
-                游客模式：可直接开聊。记录和记忆请点右上角齿轮 → 账号 注册保存。
-              </p>
+              <div className="mb-5 rounded-2xl border border-border-subtle bg-surface px-4 py-3.5">
+                <p className="text-sm text-text-secondary">游客模式 · 可直接开聊</p>
+                <p className="mt-1 text-xs leading-relaxed text-text-muted">
+                  练习记录和成长记忆需要登录后才会保存
+                </p>
+                <button
+                  type="button"
+                  onClick={handleGoToAccount}
+                  className="mt-3 w-full rounded-full border border-accent/30 bg-accent/10 px-4 py-2.5 text-sm font-medium text-accent transition-colors hover:bg-accent/15"
+                >
+                  登录 / 注册
+                </button>
+              </div>
             ) : null}
             <TopicSelector
               topics={TOPICS}
@@ -288,7 +304,7 @@ function App() {
           />
         ) : null}
 
-        {mainTab === "me" ? <MeView /> : null}
+        {mainTab === "me" ? <MeView accountDeepLink={accountDeepLink} /> : null}
       </main>
 
       {!inChat ? <BottomTabBar active={mainTab} onChange={handleMainTabChange} /> : null}

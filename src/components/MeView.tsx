@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AccountPanel } from "./AccountPanel";
 import { GrowthPanel } from "./GrowthView";
 import { SettingsIcon } from "./SettingsIcon";
@@ -10,7 +10,12 @@ import { useAuth } from "../hooks/useAuth";
 type MeScreen = "home" | "settings" | "account";
 type AccountBackTarget = "home" | "settings";
 
-export function MeView() {
+export interface MeViewProps {
+  /** Increment to open the account screen from outside (e.g. practice tab CTA). */
+  accountDeepLink?: number;
+}
+
+export function MeView({ accountDeepLink = 0 }: MeViewProps) {
   const { isAnonymous, nickname } = useAuth();
   const [screen, setScreen] = useState<MeScreen>("home");
   const [accountBackTarget, setAccountBackTarget] = useState<AccountBackTarget>("settings");
@@ -21,6 +26,13 @@ export function MeView() {
     setAccountBackTarget(from);
     setScreen("account");
   };
+
+  useEffect(() => {
+    if (accountDeepLink > 0) {
+      setAccountBackTarget("home");
+      setScreen("account");
+    }
+  }, [accountDeepLink]);
 
   const handleAccountBack = () => {
     setScreen(accountBackTarget);
@@ -71,8 +83,17 @@ export function MeView() {
       </header>
 
       {isAnonymous ? (
-        <Card variant="ghost" className="mb-6 border-dashed p-4 text-xs leading-relaxed text-text-muted">
-          游客模式 · 练习记录不会保存
+        <Card variant="ghost" className="mb-6 space-y-3 border-dashed p-4">
+          <p className="text-xs leading-relaxed text-text-muted">
+            游客模式 · 练习记录不会保存
+          </p>
+          <button
+            type="button"
+            onClick={() => openAccount("home")}
+            className="text-sm font-medium text-accent underline underline-offset-2"
+          >
+            登录 / 注册
+          </button>
         </Card>
       ) : null}
 

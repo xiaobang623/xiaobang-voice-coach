@@ -257,7 +257,7 @@ export function GrowthPanel({ isGuest, onGoToAccount }: GrowthPanelProps) {
             onClick={onGoToAccount}
             className="w-full rounded-full bg-accent px-6 py-3.5 text-sm font-medium text-surface shadow-card transition hover:bg-accent-hover"
           >
-            注册 / 登录
+            登录 / 注册
           </button>
         ) : null}
       </div>
