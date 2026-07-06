@@ -99,7 +99,7 @@ export async function logTokenUsage({
         tokensUsed > 0 ? tokensUsed : Math.max(1, Math.round(durationSeconds ?? 0));
     }
 
-    const { error } = await supabase.from("token_logs").insert({
+    const row = {
       user_id: userId,
       guest_id: guestId,
       api_provider: apiProvider,
@@ -108,10 +108,21 @@ export async function logTokenUsage({
       duration_seconds: durationSeconds,
       cost,
       session_id: sessionId,
-    });
+    };
+
+    let { error } = await supabase.from("token_logs").insert(row);
+
+    if (error && sessionId && /foreign key|violates foreign key constraint/i.test(error.message)) {
+      ({ error } = await supabase.from("token_logs").insert({ ...row, session_id: null }));
+    }
 
     if (error) {
-      console.warn("[token_logs] insert failed:", error.message);
+      console.warn("[token_logs] insert failed:", error.message, {
+        apiProvider,
+        userId,
+        guestId,
+        sessionId,
+      });
     }
   } catch (error) {
     console.warn("[token_logs] failed to write:", error instanceof Error ? error.message : error);
