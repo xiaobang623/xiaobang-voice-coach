@@ -38,7 +38,7 @@ export default async function handler(req, res) {
     const supabase = getAdminSupabase();
     const { data: logs, error } = await supabase
       .from("token_logs")
-      .select("user_id, api_provider, model_name, tokens_used, cost")
+      .select("user_id, guest_id, api_provider, model_name, tokens_used, duration_seconds, cost")
       .gte("created_at", `${dateFrom}T00:00:00.000Z`)
       .lte("created_at", `${dateTo}T23:59:59.999Z`);
 
@@ -63,23 +63,30 @@ export default async function handler(req, res) {
         api_provider: log.api_provider,
         call_count: 0,
         total_tokens: 0,
+        total_duration_seconds: 0,
         total_cost: 0,
       };
       modelRow.call_count += 1;
       modelRow.total_tokens += tokens;
+      modelRow.total_duration_seconds += Number(log.duration_seconds ?? 0);
       modelRow.total_cost += cost;
       byModelMap.set(modelKey, modelRow);
 
-      const userRow = byUserMap.get(log.user_id) ?? {
+      const actorKey = log.user_id ? `user:${log.user_id}` : `guest:${log.guest_id ?? "unknown"}`;
+      const userRow = byUserMap.get(actorKey) ?? {
+        actor_key: actorKey,
         user_id: log.user_id,
+        guest_id: log.guest_id,
         call_count: 0,
         total_tokens: 0,
+        total_duration_seconds: 0,
         total_cost: 0,
       };
       userRow.call_count += 1;
       userRow.total_tokens += tokens;
+      userRow.total_duration_seconds += Number(log.duration_seconds ?? 0);
       userRow.total_cost += cost;
-      byUserMap.set(log.user_id, userRow);
+      byUserMap.set(actorKey, userRow);
     }
 
     const byModel = [...byModelMap.values()]
@@ -89,7 +96,11 @@ export default async function handler(req, res) {
       }))
       .sort((a, b) => b.total_cost - a.total_cost);
 
-    const userIds = [...byUserMap.keys()];
+    const userIds = [
+      ...new Set(
+        (logs ?? []).map((log) => log.user_id).filter(Boolean),
+      ),
+    ];
     const nicknames = new Map();
     if (userIds.length > 0) {
       const { data: profiles } = await supabase
@@ -101,12 +112,21 @@ export default async function handler(req, res) {
       }
     }
 
-    const byUser = [...byUserMap.entries()]
-      .map(([id, row]) => ({
-        user_id: id,
-        user_nickname: nicknames.get(id) ?? "未知用户",
+    const labelForActor = (row) => {
+      if (row.user_id) {
+        return nicknames.get(row.user_id) ?? `游客 ${row.user_id.slice(0, 8)}`;
+      }
+      const guestId = row.guest_id ?? "unknown";
+      return `游客 ${guestId.slice(0, 8)}`;
+    };
+
+    const byUser = [...byUserMap.values()]
+      .map((row) => ({
+        user_id: row.user_id ?? row.guest_id ?? row.actor_key,
+        user_nickname: labelForActor(row),
         call_count: row.call_count,
         total_tokens: row.total_tokens,
+        total_duration_seconds: row.total_duration_seconds,
         total_cost: Number(row.total_cost.toFixed(2)),
       }))
       .sort((a, b) => b.total_cost - a.total_cost)

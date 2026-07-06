@@ -88,9 +88,10 @@ export default async function handler(req, res) {
     }
 
     const tokensUsed = extractDeepseekUsage(completion);
-    if (input.userId) {
+    if (input.userId || input.guestId) {
       await logTokenUsage({
-        userId: input.userId,
+        userId: input.userId ?? null,
+        guestId: input.guestId ?? null,
         apiProvider: "deepseek",
         modelName: "deepseek-chat",
         tokensUsed,

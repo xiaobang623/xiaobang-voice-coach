@@ -143,6 +143,26 @@ export function formatTokens(value: number) {
   return String(value);
 }
 
+export function formatDurationSeconds(seconds: number) {
+  if (seconds >= 60) {
+    const minutes = Math.floor(seconds / 60);
+    const rest = seconds % 60;
+    return rest > 0 ? `${minutes}分${rest}秒` : `${minutes}分`;
+  }
+  return `${seconds}秒`;
+}
+
+export function formatUsageMetric(row: {
+  api_provider: string;
+  total_tokens: number;
+  total_duration_seconds?: number;
+}) {
+  if (row.api_provider === "doubao") {
+    return formatDurationSeconds(row.total_duration_seconds ?? row.total_tokens);
+  }
+  return formatTokens(row.total_tokens);
+}
+
 export function formatDateTime(value: string | null) {
   if (!value) {
     return "—";

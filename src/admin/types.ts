@@ -37,6 +37,7 @@ export interface TokenModelRow {
   api_provider: string;
   call_count: number;
   total_tokens: number;
+  total_duration_seconds?: number;
   total_cost: number;
 }
 
@@ -45,6 +46,7 @@ export interface TokenUserRow {
   user_nickname: string;
   call_count: number;
   total_tokens: number;
+  total_duration_seconds?: number;
   total_cost: number;
 }
 

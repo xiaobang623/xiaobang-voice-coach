@@ -5,6 +5,7 @@ export interface ExtractMemoryInput {
   report: ReportJSON;
   previousSummary: MemorySummary | null;
   userId?: string;
+  guestId?: string;
   sessionId?: string;
 }
 

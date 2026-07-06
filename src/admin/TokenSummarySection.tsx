@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { TokenModelRow, TokenUserRow } from "./types";
-import { defaultDateFrom, fetchTokenSummary, formatCurrency, formatTokens, todayIsoDate } from "./api";
+import { defaultDateFrom, fetchTokenSummary, formatCurrency, formatDurationSeconds, formatTokens, formatUsageMetric, todayIsoDate } from "./api";
 
 export function TokenSummarySection() {
   const [dateFrom, setDateFrom] = useState(defaultDateFrom(30));
@@ -70,7 +70,7 @@ export function TokenSummarySection() {
                 <tr className="border-b border-border-subtle">
                   <th className="px-2 py-2">模型</th>
                   <th className="px-2 py-2">次数</th>
-                  <th className="px-2 py-2">Tokens</th>
+                  <th className="px-2 py-2">用量</th>
                   <th className="px-2 py-2">成本</th>
                 </tr>
               </thead>
@@ -86,7 +86,7 @@ export function TokenSummarySection() {
                     <tr key={`${row.api_provider}-${row.model_name}`} className="border-b border-border-subtle/70">
                       <td className="px-2 py-2">{row.model_name}</td>
                       <td className="px-2 py-2">{row.call_count}</td>
-                      <td className="px-2 py-2">{formatTokens(row.total_tokens)}</td>
+                      <td className="px-2 py-2">{formatUsageMetric(row)}</td>
                       <td className="px-2 py-2">{formatCurrency(row.total_cost)}</td>
                     </tr>
                   ))
@@ -102,7 +102,7 @@ export function TokenSummarySection() {
                 <tr className="border-b border-border-subtle">
                   <th className="px-2 py-2">用户</th>
                   <th className="px-2 py-2">次数</th>
-                  <th className="px-2 py-2">Tokens</th>
+                  <th className="px-2 py-2">用量</th>
                   <th className="px-2 py-2">成本</th>
                 </tr>
               </thead>
@@ -118,7 +118,16 @@ export function TokenSummarySection() {
                     <tr key={row.user_id} className="border-b border-border-subtle/70">
                       <td className="px-2 py-2">{row.user_nickname}</td>
                       <td className="px-2 py-2">{row.call_count}</td>
-                      <td className="px-2 py-2">{formatTokens(row.total_tokens)}</td>
+                      <td className="px-2 py-2">
+                        {[
+                          row.total_duration_seconds
+                            ? formatDurationSeconds(row.total_duration_seconds)
+                            : null,
+                          row.total_tokens ? formatTokens(row.total_tokens) : null,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ") || "—"}
+                      </td>
                       <td className="px-2 py-2">{formatCurrency(row.total_cost)}</td>
                     </tr>
                   ))
