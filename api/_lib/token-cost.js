@@ -76,6 +76,19 @@ export async function logTokenUsage({
 
   try {
     const supabase = getAdminSupabase();
+
+    if (sessionId) {
+      const { data: existing } = await supabase
+        .from("token_logs")
+        .select("id")
+        .eq("session_id", sessionId)
+        .eq("api_provider", apiProvider)
+        .maybeSingle();
+      if (existing) {
+        return;
+      }
+    }
+
     let cost = 0;
     let storedTokens = tokensUsed;
     if (apiProvider === "deepseek") {

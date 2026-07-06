@@ -10,8 +10,12 @@ export interface LogApiUsageInput {
   durationSeconds?: number;
 }
 
-export function resolveUsageActor(input: { userId?: string | null; guestId?: string | null }) {
-  if (input.userId) {
+export function resolveUsageActor(input: {
+  userId?: string | null;
+  guestId?: string | null;
+  isAnonymous?: boolean;
+}) {
+  if (input.userId && !input.isAnonymous) {
     return { userId: input.userId, guestId: null as string | null };
   }
   return { userId: null, guestId: input.guestId ?? getGuestId() };

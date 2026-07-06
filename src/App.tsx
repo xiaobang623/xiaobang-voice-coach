@@ -9,7 +9,7 @@ import {
   generateReport,
 } from "./core/report";
 import { extractMemory } from "./core/memory";
-import { resolveUsageActor } from "./core/usageLog";
+import { resolveUsageActor, logApiUsage } from "./core/usageLog";
 import { useVoiceSession } from "./hooks/useVoiceSession";
 import { useAuth } from "./hooks/useAuth";
 import { useUserPreferences } from "./hooks/useUserPreferences";
@@ -72,6 +72,7 @@ function App() {
   const [reportError, setReportError] = useState<string | null>(null);
   const [userMemory, setUserMemory] = useState<MemorySummary | null>(null);
   const sessionIdRef = useRef(crypto.randomUUID());
+  const doubaoLoggedSessionRef = useRef<string | null>(null);
 
   const [topicId, setTopicId] = useState<string | null>(null);
   const [accountDeepLink, setAccountDeepLink] = useState(0);
@@ -134,7 +135,10 @@ function App() {
     };
   }, [preferences.voiceType, preferences.speedRatio, topicId, userMemory]);
 
-  const usageActor = useMemo(() => resolveUsageActor({ userId }), [userId]);
+  const usageActor = useMemo(
+    () => resolveUsageActor({ userId, isAnonymous }),
+    [userId, isAnonymous],
+  );
 
   const getVoiceDurationSeconds = useCallback(() => {
     if (!voice.conversationStartedAt) {
@@ -142,6 +146,28 @@ function App() {
     }
     return Math.max(1, Math.floor((Date.now() - voice.conversationStartedAt) / 1000));
   }, [voice.conversationStartedAt]);
+
+  const logDoubaoUsage = useCallback(async () => {
+    const durationSeconds = getVoiceDurationSeconds();
+    if (durationSeconds < 1) {
+      return;
+    }
+
+    const sessionId = sessionIdRef.current;
+    if (doubaoLoggedSessionRef.current === sessionId) {
+      return;
+    }
+    doubaoLoggedSessionRef.current = sessionId;
+
+    await logApiUsage({
+      userId: usageActor.userId,
+      guestId: usageActor.guestId,
+      sessionId,
+      apiProvider: "doubao",
+      modelName: "volc.speech.dialog",
+      durationSeconds,
+    });
+  }, [getVoiceDurationSeconds, usageActor.guestId, usageActor.userId]);
 
   const handleSelectTopic = useCallback((selectedTopicId: string) => {
     setTopicId(selectedTopicId);
@@ -154,16 +180,19 @@ function App() {
   }, []);
 
   const handleExitChat = useCallback(() => {
+    void logDoubaoUsage();
     voice.clearConversation();
     setReport(null);
     setReportError(null);
     sessionIdRef.current = crypto.randomUUID();
+    doubaoLoggedSessionRef.current = null;
     setPracticeScreen("topics");
-  }, [voice]);
+  }, [voice, logDoubaoUsage]);
 
   const handleEndAndReport = useCallback(async () => {
     const transcript = buildTranscriptFromMessages(voice.messages);
     const durationSeconds = getVoiceDurationSeconds();
+    await logDoubaoUsage();
     voice.stop();
 
     if (!transcript.trim()) {
@@ -216,7 +245,7 @@ function App() {
     } finally {
       setReportLoading(false);
     }
-  }, [voice, topicId, isAnonymous, userMemory, usageActor, getVoiceDurationSeconds]);
+  }, [voice, topicId, isAnonymous, userMemory, usageActor, getVoiceDurationSeconds, logDoubaoUsage]);
 
   const sessionLabel = useMemo(() => {
     if (!topicId) {
