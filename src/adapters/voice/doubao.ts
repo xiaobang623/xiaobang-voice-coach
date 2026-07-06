@@ -201,8 +201,26 @@ export class DoubaoVoiceAdapter implements VoiceAdapter {
     this.handlers[event].add(handler);
   }
 
-  private openSocket(_config: VoiceConfig): void {
-    const socket = new WebSocket(WS_URL);
+  private buildProxyUrl(config: VoiceConfig): string {
+    try {
+      const url = new URL(WS_URL);
+      if (config.userId) {
+        url.searchParams.set("userId", config.userId);
+      }
+      if (config.guestId) {
+        url.searchParams.set("guestId", config.guestId);
+      }
+      if (config.sessionId) {
+        url.searchParams.set("sessionId", config.sessionId);
+      }
+      return url.toString();
+    } catch {
+      return WS_URL;
+    }
+  }
+
+  private openSocket(config: VoiceConfig): void {
+    const socket = new WebSocket(this.buildProxyUrl(config));
     socket.binaryType = "arraybuffer";
     socket.onopen = () => {
       const frame = this.buildJsonEventPayload(EventSend.StartConnection, {});

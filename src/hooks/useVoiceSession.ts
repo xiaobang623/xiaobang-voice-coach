@@ -7,6 +7,9 @@ export type VoiceSessionStatus = "connecting" | "active" | "ended";
 
 /** Per-session personalization passed into `start()`. */
 export interface VoiceStartOptions {
+  sessionId?: string;
+  userId?: string | null;
+  guestId?: string | null;
   voiceType?: string;
   speedRatio?: number;
   systemPrompt?: string;
@@ -308,8 +311,10 @@ export function useVoiceSession(): UseVoiceSessionResult {
       });
 
       await adapter.connect({
-        sessionId: crypto.randomUUID(),
+        sessionId: options?.sessionId ?? crypto.randomUUID(),
         token: "",
+        userId: options?.userId ?? undefined,
+        guestId: options?.guestId ?? undefined,
         voiceType: options?.voiceType,
         speedRatio: options?.speedRatio,
         systemPrompt: options?.systemPrompt,

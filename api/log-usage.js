@@ -49,8 +49,15 @@ export default async function handler(req, res) {
       return;
     }
 
-    if (apiProvider === "doubao" && (!Number.isFinite(durationSeconds) || durationSeconds <= 0)) {
-      json(res, 400, { success: false, error: "durationSeconds is required for doubao" });
+    if (
+      apiProvider === "doubao" &&
+      (!Number.isFinite(tokensUsed) || tokensUsed <= 0) &&
+      (!Number.isFinite(durationSeconds) || durationSeconds <= 0)
+    ) {
+      json(res, 400, {
+        success: false,
+        error: "tokensUsed or durationSeconds is required for doubao",
+      });
       return;
     }
 

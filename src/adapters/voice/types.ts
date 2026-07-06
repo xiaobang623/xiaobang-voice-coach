@@ -1,6 +1,8 @@
 export interface VoiceConfig {
   sessionId: string;
   token: string;
+  userId?: string;
+  guestId?: string;
   language?: string;
   /** Doubao TTS voice_type. Omitted => proxy fills a default. */
   voiceType?: string;

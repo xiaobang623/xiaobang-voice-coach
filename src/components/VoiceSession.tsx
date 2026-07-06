@@ -233,6 +233,9 @@ export interface VoiceSessionProps {
   settings: SessionSettings;
   sessionLabel: string;
   activeTopic?: TopicOption | null;
+  appSessionId: string;
+  usageUserId?: string | null;
+  usageGuestId?: string | null;
   voiceType: string;
   onVoiceChange: (voiceType: string) => void;
   speedRatio: number;
@@ -252,6 +255,9 @@ export function VoiceSession({
   settings,
   sessionLabel,
   activeTopic,
+  appSessionId,
+  usageUserId,
+  usageGuestId,
   voiceType,
   onVoiceChange,
   speedRatio,
@@ -283,12 +289,15 @@ export function VoiceSession({
 
   const handleStart = useCallback(() => {
     void start({
+      sessionId: appSessionId,
+      userId: usageUserId,
+      guestId: usageGuestId,
       voiceType: settings.voiceType,
       speedRatio: settings.speedRatio,
       systemPrompt: settings.systemPrompt,
       typingTestMode: import.meta.env.DEV && typingTestMode,
     });
-  }, [start, settings, typingTestMode]);
+  }, [start, appSessionId, usageUserId, usageGuestId, settings, typingTestMode]);
 
   const handleSendText = useCallback(() => {
     const text = draftText.trim();

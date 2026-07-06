@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { WebSocket, WebSocketServer } from "ws";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { createUsageTracker, parseUsageContext } from "./proxy-usage.js";
 
 const PORT = Number(process.env.PORT) || 8080;
 const TARGET_URL = "wss://openspeech.bytedance.com/api/v3/realtime/dialogue";
@@ -178,7 +179,21 @@ httpServer.on("error", (error) => {
   console.error("[proxy] server error", error);
 });
 
-wss.on("connection", (clientSocket) => {
+wss.on("connection", (clientSocket, request) => {
+  const usageContext = parseUsageContext(request?.url);
+  const usageTracker = createUsageTracker(usageContext);
+  const connectedAt = Date.now();
+  let usageFlushed = false;
+
+  const flushUsage = () => {
+    if (usageFlushed) {
+      return;
+    }
+    usageFlushed = true;
+    const durationSeconds = Math.max(1, Math.floor((Date.now() - connectedAt) / 1000));
+    void usageTracker.flush({ durationSeconds });
+  };
+
   const appId =
     process.env.DOUBAO_APP_ID ??
     process.env.VITE_DOUBAO_APP_ID ??
@@ -272,12 +287,14 @@ wss.on("connection", (clientSocket) => {
   });
 
   upstreamSocket.on("message", (data, isBinary) => {
+    usageTracker.recordFrame(data, isBinary);
     if (clientSocket.readyState === WebSocket.OPEN) {
       clientSocket.send(data, { binary: isBinary });
     }
   });
 
   clientSocket.on("close", () => {
+    flushUsage();
     if (
       upstreamSocket.readyState === WebSocket.OPEN ||
       upstreamSocket.readyState === WebSocket.CONNECTING
@@ -287,6 +304,7 @@ wss.on("connection", (clientSocket) => {
   });
 
   upstreamSocket.on("close", () => {
+    flushUsage();
     if (
       clientSocket.readyState === WebSocket.OPEN ||
       clientSocket.readyState === WebSocket.CONNECTING

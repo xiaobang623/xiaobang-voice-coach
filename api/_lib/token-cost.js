@@ -12,6 +12,33 @@ function doubaoCostPerMinute() {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0.4;
 }
 
+function doubaoCostPer1MTokens() {
+  const raw = process.env.DOUBAO_COST_PER_1M_TOKENS;
+  const parsed = raw ? Number(raw) : null;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+export function calculateDoubaoTokenCost(tokensUsed) {
+  const perMillion = doubaoCostPer1MTokens();
+  if (!perMillion) {
+    return null;
+  }
+  return Number(((tokensUsed / 1_000_000) * perMillion).toFixed(6));
+}
+
+export function calculateDoubaoCostFromUsage({ tokensUsed = 0, durationSeconds = null }) {
+  if (tokensUsed > 0) {
+    const tokenCost = calculateDoubaoTokenCost(tokensUsed);
+    if (tokenCost != null) {
+      return tokenCost;
+    }
+  }
+  if (durationSeconds && durationSeconds > 0) {
+    return calculateDoubaoCost(durationSeconds);
+  }
+  return 0;
+}
+
 export function calculateDeepseekCost(tokensUsed) {
   const perMillion = deepseekCostPer1MTokens();
   return Number(((tokensUsed / 1_000_000) * perMillion).toFixed(6));
@@ -39,17 +66,24 @@ export async function logTokenUsage({
     return;
   }
 
-  if (apiProvider === "doubao" && (!durationSeconds || durationSeconds <= 0)) {
+  if (
+    apiProvider === "doubao" &&
+    (!tokensUsed || tokensUsed <= 0) &&
+    (!durationSeconds || durationSeconds <= 0)
+  ) {
     return;
   }
 
   try {
     const supabase = getAdminSupabase();
     let cost = 0;
+    let storedTokens = tokensUsed;
     if (apiProvider === "deepseek") {
       cost = calculateDeepseekCost(tokensUsed);
     } else if (apiProvider === "doubao") {
-      cost = calculateDoubaoCost(durationSeconds);
+      cost = calculateDoubaoCostFromUsage({ tokensUsed, durationSeconds });
+      storedTokens =
+        tokensUsed > 0 ? tokensUsed : Math.max(1, Math.round(durationSeconds ?? 0));
     }
 
     const { error } = await supabase.from("token_logs").insert({
@@ -57,7 +91,7 @@ export async function logTokenUsage({
       guest_id: guestId,
       api_provider: apiProvider,
       model_name: modelName,
-      tokens_used: apiProvider === "doubao" ? Math.max(1, Math.round(durationSeconds)) : tokensUsed,
+      tokens_used: storedTokens,
       duration_seconds: durationSeconds,
       cost,
       session_id: sessionId,
