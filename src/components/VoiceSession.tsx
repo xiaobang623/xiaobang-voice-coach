@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReportJSON, SessionSettings } from "../types";
 import type { UseVoiceSessionResult } from "../hooks/useVoiceSession";
 import { SPEED_OPTIONS, VOICE_OPTIONS } from "../config/session";
+import { isTypingTestAvailable } from "../config/features";
 import { ReportView } from "./ReportView";
 import { TopicBridge } from "./TopicBridge";
 import { Button } from "./ui/Button";
@@ -295,7 +296,7 @@ export function VoiceSession({
       voiceType: settings.voiceType,
       speedRatio: settings.speedRatio,
       systemPrompt: settings.systemPrompt,
-      typingTestMode: import.meta.env.DEV && typingTestMode,
+      typingTestMode: isTypingTestAvailable() && typingTestMode,
     });
   }, [start, appSessionId, usageUserId, usageGuestId, settings, typingTestMode]);
 
@@ -390,7 +391,7 @@ export function VoiceSession({
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          {import.meta.env.DEV ? (
+          {isTypingTestAvailable() ? (
             <button
               type="button"
               onClick={() => setTypingTestMode((current) => !current)}
@@ -641,7 +642,7 @@ export function VoiceSession({
         </div>
 
         <div className="relative z-10 border-t border-border-subtle bg-surface/80 px-4 py-5 backdrop-blur-md">
-          {import.meta.env.DEV && typingTestMode && isActive ? (
+          {isTypingTestAvailable() && typingTestMode && isActive ? (
             <form
               className="mb-4 flex gap-2"
               onSubmit={(event) => {
