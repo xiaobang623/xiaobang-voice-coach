@@ -1,6 +1,5 @@
-import { requireAdmin } from "../../_lib/admin-auth.js";
-import { getAdminSupabase } from "../../_lib/admin-supabase.js";
-import { setJsonCors, json } from "../../_lib/http.js";
+import { requireAdmin } from "../_lib/admin-auth.js";
+import { setJsonCors, json } from "../_lib/http.js";
 
 export default async function handler(req, res) {
   setJsonCors(res);
