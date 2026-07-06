@@ -7,6 +7,52 @@ function parseIntParam(value, fallback) {
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
 }
 
+function aggregateGuestRows(logs) {
+  const guestMap = new Map();
+
+  for (const log of logs ?? []) {
+    const guestId = log.guest_id;
+    if (!guestId) {
+      continue;
+    }
+
+    const row =
+      guestMap.get(guestId) ??
+      {
+        id: guestId,
+        nickname: `游客 ${guestId.slice(0, 8)}`,
+        is_guest: true,
+        created_at: log.created_at,
+        session_ids: new Set(),
+        total_cost: 0,
+        last_session: null,
+      };
+
+    row.total_cost += Number(log.cost ?? 0);
+    if (log.session_id) {
+      row.session_ids.add(log.session_id);
+    }
+    if (!row.created_at || log.created_at < row.created_at) {
+      row.created_at = log.created_at;
+    }
+    if (!row.last_session || log.created_at > row.last_session) {
+      row.last_session = log.created_at;
+    }
+
+    guestMap.set(guestId, row);
+  }
+
+  return [...guestMap.values()].map((row) => ({
+    id: row.id,
+    nickname: row.nickname,
+    is_guest: true,
+    created_at: row.created_at,
+    session_count: row.session_ids.size,
+    total_cost: Number(row.total_cost.toFixed(2)),
+    last_session: row.last_session,
+  }));
+}
+
 export default async function handler(req, res) {
   setJsonCors(res);
 
@@ -29,22 +75,33 @@ export default async function handler(req, res) {
     const url = new URL(req.url, "http://localhost");
     const page = parseIntParam(url.searchParams.get("page"), 1);
     const limit = Math.min(parseIntParam(url.searchParams.get("limit"), 50), 100);
-    const search = (url.searchParams.get("search") ?? "").trim();
+    const search = (url.searchParams.get("search") ?? "").trim().toLowerCase();
     const sortBy = url.searchParams.get("sort_by") ?? "created_at";
     const sortOrder = url.searchParams.get("sort_order") === "asc" ? "asc" : "desc";
     const offset = (page - 1) * limit;
 
     const supabase = getAdminSupabase();
 
-    let profileQuery = supabase.from("profiles").select("id, nickname, created_at", { count: "exact" });
+    let profileQuery = supabase.from("profiles").select("id, nickname, created_at");
 
     if (search) {
       profileQuery = profileQuery.ilike("nickname", `%${search}%`);
     }
 
-    const { data: profiles, count, error: profileError } = await profileQuery;
+    const [{ data: profiles, error: profileError }, { data: guestLogs, error: guestLogError }] =
+      await Promise.all([
+        profileQuery,
+        supabase
+          .from("token_logs")
+          .select("guest_id, cost, created_at, session_id")
+          .not("guest_id", "is", null),
+      ]);
+
     if (profileError) {
       throw new Error(profileError.message);
+    }
+    if (guestLogError) {
+      throw new Error(guestLogError.message);
     }
 
     const profileList = profiles ?? [];
@@ -86,14 +143,25 @@ export default async function handler(req, res) {
       }
     }
 
-    const rows = profileList.map((profile) => ({
+    const registeredRows = profileList.map((profile) => ({
       id: profile.id,
       nickname: profile.nickname ?? "未设置昵称",
+      is_guest: false,
       created_at: profile.created_at,
       session_count: sessionCounts.get(profile.id) ?? 0,
       total_cost: Number((totalCosts.get(profile.id) ?? 0).toFixed(2)),
       last_session: lastSessions.get(profile.id) ?? null,
     }));
+
+    let guestRows = aggregateGuestRows(guestLogs);
+    if (search) {
+      guestRows = guestRows.filter(
+        (row) =>
+          row.nickname.toLowerCase().includes(search) || row.id.toLowerCase().includes(search),
+      );
+    }
+
+    const rows = [...registeredRows, ...guestRows];
 
     const sortableKeys = new Set(["created_at", "session_count", "total_cost"]);
     const key = sortableKeys.has(sortBy) ? sortBy : "created_at";
@@ -116,6 +184,7 @@ export default async function handler(req, res) {
       return sortOrder === "asc" ? 1 : -1;
     });
 
+    const total = rows.length;
     const paged = rows.slice(offset, offset + limit);
 
     json(res, 200, {
@@ -124,7 +193,7 @@ export default async function handler(req, res) {
       pagination: {
         page,
         limit,
-        total: count ?? rows.length,
+        total,
       },
     });
   } catch (error) {

@@ -389,19 +389,44 @@ export function VoiceSession({
             <p className="truncate text-xs text-text-muted">{statusLine}</p>
           </div>
         </div>
-        <button
-          type="button"
-          onClick={() => setControlsOpen((open) => !open)}
-          aria-expanded={controlsOpen}
-          aria-label="练习设置"
-          className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full border transition ${
-            controlsOpen
-              ? "border-accent bg-accent-soft/50 text-accent"
-              : "border-border-subtle bg-surface-raised text-text-secondary shadow-card hover:text-accent"
-          }`}
-        >
-          <SlidersIcon className="h-4 w-4" />
-        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          {import.meta.env.DEV ? (
+            <button
+              type="button"
+              onClick={() => setTypingTestMode((current) => !current)}
+              aria-pressed={typingTestMode}
+              disabled={sessionLocked}
+              title={
+                sessionLocked
+                  ? "对话进行中暂不可切换，请先暂停"
+                  : typingTestMode
+                    ? "关闭打字测试"
+                    : "开启打字测试（免麦克风）"
+              }
+              className={`flex h-10 items-center gap-1.5 rounded-full border px-3 text-[11px] font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                typingTestMode
+                  ? "border-accent bg-accent-soft/50 text-accent"
+                  : "border-border-subtle bg-surface-raised text-text-secondary shadow-card hover:text-accent"
+              }`}
+            >
+              <span aria-hidden="true">⌨️</span>
+              <span className="hidden sm:inline">打字测试</span>
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => setControlsOpen((open) => !open)}
+            aria-expanded={controlsOpen}
+            aria-label="练习设置"
+            className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full border transition ${
+              controlsOpen
+                ? "border-accent bg-accent-soft/50 text-accent"
+                : "border-border-subtle bg-surface-raised text-text-secondary shadow-card hover:text-accent"
+            }`}
+          >
+            <SlidersIcon className="h-4 w-4" />
+          </button>
+        </div>
       </div>
 
       {controlsOpen ? (
@@ -458,28 +483,6 @@ export function VoiceSession({
               )}
               <span className="hidden sm:inline">{showSubtitle ? "字幕" : "纯听"}</span>
             </button>
-
-            {import.meta.env.DEV ? (
-              <button
-                type="button"
-                onClick={() => setTypingTestMode((current) => !current)}
-                aria-pressed={typingTestMode}
-                disabled={sessionLocked}
-                title={
-                  sessionLocked
-                    ? "对话进行中暂不可切换，请先暂停"
-                    : typingTestMode
-                      ? "关闭打字测试"
-                      : "开启打字测试（免麦克风）"
-                }
-                className={`inline-flex shrink-0 items-center gap-1 px-3 py-2.5 text-[11px] font-medium transition hover:bg-bg-warm/50 disabled:cursor-not-allowed disabled:opacity-50 ${
-                  typingTestMode ? "bg-accent-soft/50 text-text" : "text-text-secondary"
-                }`}
-              >
-                <span aria-hidden="true">⌨️</span>
-                <span className="hidden sm:inline">打字测试</span>
-              </button>
-            ) : null}
           </div>
         </Card>
       ) : null}

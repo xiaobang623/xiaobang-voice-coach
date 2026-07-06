@@ -19,8 +19,8 @@ function StatCard({ label, value, sub }: { label: string; value: string; sub: st
 export function DashboardSummaryCards({ data, loading }: DashboardSummaryProps) {
   if (loading) {
     return (
-      <section className="grid gap-4 md:grid-cols-3">
-        {[1, 2, 3].map((key) => (
+      <section className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        {[1, 2, 3, 4].map((key) => (
           <div key={key} className="h-28 animate-pulse rounded-2xl bg-bg-warm" />
         ))}
       </section>
@@ -34,11 +34,16 @@ export function DashboardSummaryCards({ data, loading }: DashboardSummaryProps) 
   return (
     <section>
       <h2 className="mb-4 text-base font-medium text-text">今日数据</h2>
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <StatCard
-          label="用户"
+          label="注册用户"
           value={`${data.total_users} 人`}
           sub={`今日新用户 ${data.new_users_today} 人`}
+        />
+        <StatCard
+          label="游客"
+          value={`${data.total_guests ?? 0} 人`}
+          sub="有 API 用量记录的游客"
         />
         <StatCard
           label="对话"

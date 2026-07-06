@@ -243,7 +243,15 @@ export class DoubaoVoiceAdapter implements VoiceAdapter {
     };
 
     socket.onerror = () => {
-      this.emitError(new Error("Doubao realtime websocket error."));
+      const isLocalProxy =
+        WS_URL.includes("localhost") || WS_URL.includes("127.0.0.1");
+      this.emitError(
+        new Error(
+          isLocalProxy
+            ? "语音代理连不上，请在另一个终端运行 npm run proxy。"
+            : "Doubao realtime websocket error.",
+        ),
+      );
     };
 
     socket.onclose = (event) => {

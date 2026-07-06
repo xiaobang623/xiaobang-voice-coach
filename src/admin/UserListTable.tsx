@@ -61,7 +61,7 @@ export function UserListTable({ onSelectUser }: UserListTableProps) {
               setPagination((prev) => ({ ...prev, page: 1 }));
               setSearch(event.target.value);
             }}
-            placeholder="搜索昵称"
+            placeholder="搜索昵称或游客 ID"
             className="rounded-full border border-border bg-bg px-3 py-1.5 text-sm outline-none focus:border-accent"
           />
           <select
@@ -90,6 +90,7 @@ export function UserListTable({ onSelectUser }: UserListTableProps) {
         <table className="min-w-full text-left text-sm">
           <thead className="text-text-muted">
             <tr className="border-b border-border-subtle">
+              <th className="px-2 py-2 font-medium">类型</th>
               <th className="px-2 py-2 font-medium">昵称</th>
               <th className="px-2 py-2 font-medium">注册时间</th>
               <th className="px-2 py-2 font-medium">对话次数</th>
@@ -100,29 +101,33 @@ export function UserListTable({ onSelectUser }: UserListTableProps) {
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={5} className="px-2 py-6 text-center text-text-muted">
+                <td colSpan={6} className="px-2 py-6 text-center text-text-muted">
                   加载中…
                 </td>
               </tr>
             ) : rows.length === 0 ? (
               <tr>
-                <td colSpan={5} className="px-2 py-6 text-center text-text-muted">
+                <td colSpan={6} className="px-2 py-6 text-center text-text-muted">
                   暂无用户
                 </td>
               </tr>
             ) : (
               rows.map((row) => (
                 <tr key={row.id} className="border-b border-border-subtle/70">
+                  <td className="px-2 py-2 text-text-muted">
+                    {row.is_guest ? "游客" : "注册"}
+                  </td>
                   <td className="px-2 py-2">
                     <button
                       type="button"
                       onClick={() => onSelectUser(row.id)}
                       className="text-accent hover:underline"
+                      title={row.is_guest ? row.id : undefined}
                     >
                       {row.nickname}
                     </button>
                   </td>
-                  <td className="px-2 py-2">{formatDateTime(row.created_at)}</td>
+                  <td className="px-2 py-2">{row.is_guest ? "—" : formatDateTime(row.created_at)}</td>
                   <td className="px-2 py-2">{row.session_count}</td>
                   <td className="px-2 py-2">{formatCurrency(row.total_cost)}</td>
                   <td className="px-2 py-2">{formatDateTime(row.last_session)}</td>

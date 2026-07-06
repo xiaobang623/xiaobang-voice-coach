@@ -5,6 +5,7 @@ export interface AdminUser {
 
 export interface DashboardSummary {
   total_users: number;
+  total_guests: number;
   total_sessions: number;
   total_cost: number;
   new_users_today: number;
@@ -15,6 +16,7 @@ export interface DashboardSummary {
 export interface AdminUserRow {
   id: string;
   nickname: string;
+  is_guest?: boolean;
   created_at: string;
   session_count: number;
   total_cost: number;

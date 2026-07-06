@@ -39,6 +39,7 @@ export default async function handler(req, res) {
       { count: sessionsToday },
       { data: allCosts },
       { data: todayCosts },
+      { data: guestLogs },
     ] = await Promise.all([
       supabase.from("profiles").select("id", { count: "exact", head: true }),
       supabase.from("sessions").select("id", { count: "exact", head: true }),
@@ -58,7 +59,10 @@ export default async function handler(req, res) {
         .select("cost")
         .gte("created_at", start)
         .lte("created_at", end),
+      supabase.from("token_logs").select("guest_id").not("guest_id", "is", null),
     ]);
+
+    const totalGuests = new Set((guestLogs ?? []).map((row) => row.guest_id).filter(Boolean)).size;
 
     const sumCost = (rows) =>
       Number((rows ?? []).reduce((sum, row) => sum + Number(row.cost ?? 0), 0).toFixed(2));
@@ -67,6 +71,7 @@ export default async function handler(req, res) {
       success: true,
       data: {
         total_users: totalUsers ?? 0,
+        total_guests: totalGuests,
         total_sessions: totalSessions ?? 0,
         total_cost: sumCost(allCosts),
         new_users_today: newUsersToday ?? 0,
