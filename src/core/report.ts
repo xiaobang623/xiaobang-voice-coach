@@ -5,6 +5,7 @@ export interface GenerateReportInput {
   sessionId: string;
   transcript: string;
   durationSeconds: number;
+  userId?: string;
 }
 
 export function buildTranscriptFromMessages(messages: VoiceSessionMessage[]): string {

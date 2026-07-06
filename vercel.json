@@ -1,11 +1,15 @@
 {
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/$1" },
+    { "source": "/admin/:path*", "destination": "/index.html" },
     { "source": "/(.*)", "destination": "/index.html" }
   ],
   "functions": {
     "api/generate-report.js": {
       "maxDuration": 60
+    },
+    "api/admin/**/*.js": {
+      "maxDuration": 30
     }
   }
 }

@@ -1,4 +1,5 @@
 import { MEMORY_SYSTEM_PROMPT, postProcessMemory } from "../memory-post-process.js";
+import { extractDeepseekUsage, logTokenUsage } from "./_lib/token-cost.js";
 
 function setCorsHeaders(res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -92,6 +93,17 @@ export default async function handler(req, res) {
     if (!content || typeof content !== "string") {
       res.status(502).json({ error: "Empty model response" });
       return;
+    }
+
+    const tokensUsed = extractDeepseekUsage(completion);
+    if (input.userId) {
+      await logTokenUsage({
+        userId: input.userId,
+        apiProvider: "deepseek",
+        modelName: "deepseek-chat",
+        tokensUsed,
+        sessionId: input.sessionId ?? null,
+      });
     }
 
     const raw = JSON.parse(content);

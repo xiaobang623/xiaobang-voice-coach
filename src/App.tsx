@@ -172,6 +172,7 @@ function App() {
         sessionId: sessionIdRef.current,
         transcript,
         durationSeconds,
+        userId: userId ?? undefined,
       });
       setReport(nextReport);
 
@@ -189,6 +190,8 @@ function App() {
             transcript,
             report: nextReport,
             previousSummary: userMemory,
+            userId: userId ?? undefined,
+            sessionId: sessionIdRef.current,
           });
           await upsertUserMemory(nextMemory);
           setUserMemory(nextMemory);
@@ -204,7 +207,7 @@ function App() {
     } finally {
       setReportLoading(false);
     }
-  }, [voice, topicId, isAnonymous, userMemory]);
+  }, [voice, topicId, isAnonymous, userMemory, userId]);
 
   const sessionLabel = useMemo(() => {
     if (!topicId) {

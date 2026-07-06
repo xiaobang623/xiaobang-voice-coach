@@ -1,0 +1,130 @@
+import { requireAdmin } from "../_lib/admin-auth.js";
+import { getAdminSupabase } from "../_lib/admin-supabase.js";
+import { setJsonCors, json } from "../_lib/http.js";
+
+function defaultDateFrom() {
+  const date = new Date();
+  date.setDate(date.getDate() - 30);
+  return date.toISOString().slice(0, 10);
+}
+
+function todayDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+export default async function handler(req, res) {
+  setJsonCors(res);
+
+  if (req.method === "OPTIONS") {
+    res.status(204).end();
+    return;
+  }
+
+  if (req.method !== "GET") {
+    json(res, 405, { success: false, error: "Method not allowed" });
+    return;
+  }
+
+  const user = await requireAdmin(req, res);
+  if (!user) {
+    return;
+  }
+
+  try {
+    const url = new URL(req.url, "http://localhost");
+    const dateFrom = url.searchParams.get("date_from") ?? defaultDateFrom();
+    const dateTo = url.searchParams.get("date_to") ?? todayDate();
+
+    const supabase = getAdminSupabase();
+    const { data: logs, error } = await supabase
+      .from("token_logs")
+      .select("user_id, api_provider, model_name, tokens_used, cost")
+      .gte("created_at", `${dateFrom}T00:00:00.000Z`)
+      .lte("created_at", `${dateTo}T23:59:59.999Z`);
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    const byModelMap = new Map();
+    const byUserMap = new Map();
+    let totalCost = 0;
+    let totalTokens = 0;
+
+    for (const log of logs ?? []) {
+      const tokens = Number(log.tokens_used ?? 0);
+      const cost = Number(log.cost ?? 0);
+      totalTokens += tokens;
+      totalCost += cost;
+
+      const modelKey = `${log.api_provider}::${log.model_name}`;
+      const modelRow = byModelMap.get(modelKey) ?? {
+        model_name: log.model_name,
+        api_provider: log.api_provider,
+        call_count: 0,
+        total_tokens: 0,
+        total_cost: 0,
+      };
+      modelRow.call_count += 1;
+      modelRow.total_tokens += tokens;
+      modelRow.total_cost += cost;
+      byModelMap.set(modelKey, modelRow);
+
+      const userRow = byUserMap.get(log.user_id) ?? {
+        user_id: log.user_id,
+        call_count: 0,
+        total_tokens: 0,
+        total_cost: 0,
+      };
+      userRow.call_count += 1;
+      userRow.total_tokens += tokens;
+      userRow.total_cost += cost;
+      byUserMap.set(log.user_id, userRow);
+    }
+
+    const byModel = [...byModelMap.values()]
+      .map((row) => ({
+        ...row,
+        total_cost: Number(row.total_cost.toFixed(2)),
+      }))
+      .sort((a, b) => b.total_cost - a.total_cost);
+
+    const userIds = [...byUserMap.keys()];
+    const nicknames = new Map();
+    if (userIds.length > 0) {
+      const { data: profiles } = await supabase
+        .from("profiles")
+        .select("id, nickname")
+        .in("id", userIds);
+      for (const profile of profiles ?? []) {
+        nicknames.set(profile.id, profile.nickname ?? "未设置昵称");
+      }
+    }
+
+    const byUser = [...byUserMap.entries()]
+      .map(([id, row]) => ({
+        user_id: id,
+        user_nickname: nicknames.get(id) ?? "未知用户",
+        call_count: row.call_count,
+        total_tokens: row.total_tokens,
+        total_cost: Number(row.total_cost.toFixed(2)),
+      }))
+      .sort((a, b) => b.total_cost - a.total_cost)
+      .slice(0, 20);
+
+    json(res, 200, {
+      success: true,
+      data: {
+        total_cost: Number(totalCost.toFixed(2)),
+        total_tokens: totalTokens,
+        by_model: byModel,
+        by_user: byUser,
+      },
+    });
+  } catch (error) {
+    json(res, 500, {
+      success: false,
+      error: error instanceof Error ? error.message : "Failed to load token summary",
+    });
+  }
+}

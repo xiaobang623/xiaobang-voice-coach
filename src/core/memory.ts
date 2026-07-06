@@ -4,6 +4,8 @@ export interface ExtractMemoryInput {
   transcript: string;
   report: ReportJSON;
   previousSummary: MemorySummary | null;
+  userId?: string;
+  sessionId?: string;
 }
 
 async function readResponseErrorDetail(response: Response): Promise<string> {
