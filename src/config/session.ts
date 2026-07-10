@@ -1,4 +1,4 @@
-import type { MemorySummary, SpeedOption, VoiceOption } from "../types";
+import type { MemorySummary, SpeedOption, TaskScenario, VoiceOption } from "../types";
 
 /**
  * S2S-Omni (O2.0) official voices for volc.speech.dialog.
@@ -16,16 +16,20 @@ export const DEFAULT_VOICE_TYPE = "zh_female_vv_jupiter_bigtts";
 
 /** Speed presets. ratio -> Doubao `speed_ratio` (range 0.8–2.0, default 1.0). */
 export const SPEED_OPTIONS: SpeedOption[] = [
-  { id: "slow", label: "慢", ratio: 0.85 },
+  { id: "slow", label: "慢", ratio: 0.9 },
   { id: "normal", label: "正常", ratio: 1.0 },
-  { id: "fast", label: "快", ratio: 1.3 },
+  { id: "fast", label: "快", ratio: 1.25 },
 ];
 
 export const DEFAULT_SPEED_RATIO = 1.0;
 
 /** Base persona for the Coach. Topic-specific guidance is appended per session. */
-const BASE_SYSTEM_ROLE =
-  "You are a friendly English speaking coach. Keep responses natural and conversational.";
+const BASE_SYSTEM_ROLE = [
+  "You are a calm, concise English speaking coach.",
+  "Reply like a real live conversation, not a written lesson.",
+  "Prefer one short spoken sentence under 15 words; use two only when necessary.",
+  "Ask at most one simple question, and avoid long clauses, lists, or grammar lectures.",
+].join(" ");
 
 /**
  * Merge the base persona with the selected topic's promptSeed and optional
@@ -43,6 +47,36 @@ export function buildSystemPrompt(promptSeed?: string, memory?: MemorySummary | 
   }
 
   return `${BASE_SYSTEM_ROLE} ${memoryBlock} ${topicLine}`;
+}
+
+/**
+ * Task-mode system_role: role-play persona + embedded sub-goals for the Coach.
+ * The Coach guides toward goals naturally and never announces completion aloud.
+ */
+export function buildTaskSystemPrompt(
+  scenario: TaskScenario,
+  memory?: MemorySummary | null,
+): string {
+  const goalBlock = scenario.goals
+    .map((goal, index) => `Sub-goal ${index + 1}: ${goal.coachHint}`)
+    .join(" ");
+
+  const roleBlock = [
+    scenario.roleSetup,
+    "You are also an English speaking coach — reply like a real live conversation, not a written lesson.",
+    "Prefer one short spoken sentence under 15 words; use two only when necessary.",
+    "Ask at most one simple question, and avoid long clauses, lists, or grammar lectures.",
+    "Guide the user toward each sub-goal through realistic role-play dialogue.",
+    "Never say things like 'you completed goal 1' or 'task done' — stay in character.",
+    "When a sub-goal seems reached, smoothly move the scene forward.",
+    goalBlock,
+  ].join(" ");
+
+  const memoryBlock = formatMemoryBlock(memory);
+  if (!memoryBlock) {
+    return roleBlock;
+  }
+  return `${roleBlock} ${memoryBlock}`;
 }
 
 function formatMemoryBlock(memory?: MemorySummary | null): string {

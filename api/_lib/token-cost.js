@@ -18,6 +18,20 @@ function doubaoCostPer1MTokens() {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
+function siliconflowCostPer1KChars() {
+  const raw = process.env.SILICONFLOW_COST_PER_1K_CHARS;
+  const parsed = raw ? Number(raw) : 0.05;
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0.05;
+}
+
+export function calculateSiliconFlowCost(charactersUsed) {
+  const per1k = siliconflowCostPer1KChars();
+  if (!charactersUsed || charactersUsed <= 0 || per1k <= 0) {
+    return 0;
+  }
+  return Number(((charactersUsed / 1000) * per1k).toFixed(6));
+}
+
 export function calculateDoubaoTokenCost(tokensUsed) {
   const perMillion = doubaoCostPer1MTokens();
   if (!perMillion) {
@@ -74,6 +88,10 @@ export async function logTokenUsage({
     return;
   }
 
+  if (apiProvider === "siliconflow" && (!tokensUsed || tokensUsed <= 0)) {
+    return;
+  }
+
   try {
     const supabase = getAdminSupabase();
 
@@ -97,6 +115,9 @@ export async function logTokenUsage({
       cost = calculateDoubaoCostFromUsage({ tokensUsed, durationSeconds });
       storedTokens =
         tokensUsed > 0 ? tokensUsed : Math.max(1, Math.round(durationSeconds ?? 0));
+    } else if (apiProvider === "siliconflow") {
+      cost = calculateSiliconFlowCost(tokensUsed);
+      storedTokens = Math.max(1, Math.round(tokensUsed));
     }
 
     const row = {

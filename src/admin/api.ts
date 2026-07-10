@@ -2,10 +2,17 @@ import type {
   AdminSessionRow,
   AdminUser,
   AdminUserRow,
+  CostProviderRow,
   DashboardSummary,
+  ModelInstancesData,
   Pagination,
+  ResolvedVoiceConfigPreview,
+  SessionCostProviderRow,
   TokenModelRow,
   TokenUserRow,
+  VoiceBackend,
+  VoiceBackendConfigRow,
+  VoiceModelConfigPayload,
 } from "./types";
 
 interface ApiSuccess<T> {
@@ -24,6 +31,18 @@ interface ApiError {
   error: string;
 }
 
+async function readJsonResponse<T>(response: Response): Promise<T | ApiError | null> {
+  const text = await response.text();
+  if (!text.trim()) {
+    return null;
+  }
+  try {
+    return JSON.parse(text) as T | ApiError;
+  } catch {
+    throw new Error(`API 返回了非 JSON 内容（${response.status}）`);
+  }
+}
+
 async function adminFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     credentials: "include",
@@ -34,7 +53,13 @@ async function adminFetch<T>(path: string, init?: RequestInit): Promise<T> {
     },
   });
 
-  const body = (await response.json()) as T | ApiError;
+  const body = await readJsonResponse<T>(response);
+  if (body === null) {
+    throw new Error(
+      `API 无响应（${response.status}）。本地开发请先运行 npm run dev:api，再运行 npm run dev。`,
+    );
+  }
+
   if (!response.ok || (body as ApiError).success === false) {
     const message = (body as ApiError).error ?? `Request failed (${response.status})`;
     throw new Error(message);
@@ -111,6 +136,7 @@ export async function fetchTokenSummary(params: {
 }): Promise<{
   total_cost: number;
   total_tokens: number;
+  by_provider: CostProviderRow[];
   by_model: TokenModelRow[];
   by_user: TokenUserRow[];
 }> {
@@ -122,11 +148,35 @@ export async function fetchTokenSummary(params: {
     ApiSuccess<{
       total_cost: number;
       total_tokens: number;
+      by_provider: CostProviderRow[];
       by_model: TokenModelRow[];
       by_user: TokenUserRow[];
     }>
   >(`/api/admin/token-summary?${query}`);
   return result.data;
+}
+
+export function formatSessionCostBreakdown(
+  rows: SessionCostProviderRow[] | undefined,
+  totalCost: number,
+) {
+  if (!rows?.length) {
+    return formatCurrency(totalCost);
+  }
+  return rows
+    .filter((row) => row.cost > 0)
+    .map((row) => `${row.short_label} ${formatCurrency(row.cost)}`)
+    .join(" · ");
+}
+
+export function formatVoiceBackendLabel(backend: AdminSessionRow["voice_backend"]) {
+  if (backend === "doubao") {
+    return "豆包";
+  }
+  if (backend === "selfhosted") {
+    return "自建 / 硅谷云";
+  }
+  return "—";
 }
 
 export function formatCurrency(value: number) {
@@ -152,13 +202,72 @@ export function formatDurationSeconds(seconds: number) {
   return `${seconds}秒`;
 }
 
+export function formatCharacters(value: number) {
+  if (value >= 10_000) {
+    return `${(value / 10_000).toFixed(1)} 万字`;
+  }
+  if (value >= 1000) {
+    return `${(value / 1000).toFixed(1)} 千字`;
+  }
+  return `${value} 字`;
+}
+
+export function getProviderBadgeClass(apiProvider: string) {
+  if (apiProvider === "doubao") {
+    return "bg-amber-50 text-amber-800 border-amber-200";
+  }
+  if (apiProvider === "siliconflow") {
+    return "bg-sky-50 text-sky-800 border-sky-200";
+  }
+  if (apiProvider === "deepseek") {
+    return "bg-violet-50 text-violet-800 border-violet-200";
+  }
+  return "bg-bg-warm text-text-secondary border-border-subtle";
+}
+
+export function formatProviderLabel(apiProvider: string, fallback?: string) {
+  if (apiProvider === "doubao") {
+    return "豆包";
+  }
+  if (apiProvider === "siliconflow") {
+    return "硅谷云";
+  }
+  if (apiProvider === "deepseek") {
+    return "DeepSeek";
+  }
+  return fallback ?? apiProvider;
+}
+
+export function formatCostProviderBreakdown(rows: CostProviderRow[] | undefined) {
+  if (!rows?.length) {
+    return "暂无分项";
+  }
+  return rows
+    .filter((row) => row.total_cost > 0 || row.call_count > 0)
+    .map((row) => `${row.short_label} ${formatCurrency(row.total_cost)}`)
+    .join(" · ");
+}
+
 export function formatUsageMetric(row: {
   api_provider: string;
+  usage_kind?: CostProviderRow["usage_kind"];
   total_tokens: number;
   total_duration_seconds?: number;
+  total_characters?: number;
 }) {
-  if (row.api_provider === "doubao") {
+  const usageKind =
+    row.usage_kind ??
+    (row.api_provider === "doubao"
+      ? "duration"
+      : row.api_provider === "siliconflow"
+        ? "characters"
+        : "tokens");
+
+  if (usageKind === "duration") {
     return formatDurationSeconds(row.total_duration_seconds ?? row.total_tokens);
+  }
+  if (usageKind === "characters") {
+    return formatCharacters(row.total_characters ?? row.total_tokens);
   }
   return formatTokens(row.total_tokens);
 }
@@ -183,4 +292,63 @@ export function defaultDateFrom(days: number) {
 
 export function todayIsoDate() {
   return new Date().toISOString().slice(0, 10);
+}
+
+export async function fetchVoiceConfigRows(scopeType?: string): Promise<VoiceBackendConfigRow[]> {
+  const query = scopeType ? `?scope_type=${encodeURIComponent(scopeType)}` : "";
+  const result = await adminFetch<ApiSuccess<VoiceBackendConfigRow[]>>(`/api/admin/voice-config${query}`);
+  return result.data;
+}
+
+export async function fetchResolvedVoiceConfig(params: {
+  userId?: string;
+  guestId?: string;
+  sessionId?: string;
+}): Promise<{ effective: ResolvedVoiceConfigPreview; instanceKeys: ModelInstancesData["keys"] }> {
+  const query = new URLSearchParams({ resolve: "true" });
+  if (params.userId) {
+    query.set("userId", params.userId);
+  }
+  if (params.guestId) {
+    query.set("guestId", params.guestId);
+  }
+  if (params.sessionId) {
+    query.set("sessionId", params.sessionId);
+  }
+  const result = await adminFetch<
+    ApiSuccess<{ effective: ResolvedVoiceConfigPreview; instanceKeys: ModelInstancesData["keys"] }>
+  >(`/api/admin/voice-config?${query}`);
+  return result.data;
+}
+
+export async function saveVoiceConfig(input: {
+  scopeType: "global" | "user" | "session";
+  backend: VoiceBackend;
+  config: VoiceModelConfigPayload;
+  userId?: string;
+  guestId?: string;
+  sessionId?: string;
+}): Promise<VoiceBackendConfigRow> {
+  const result = await adminFetch<ApiSuccess<VoiceBackendConfigRow>>("/api/admin/voice-config", {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
+  return result.data;
+}
+
+export async function deleteVoiceConfigOverride(input: {
+  scopeType: "user" | "session";
+  userId?: string;
+  guestId?: string;
+  sessionId?: string;
+}) {
+  return adminFetch<{ success: true }>("/api/admin/voice-config", {
+    method: "DELETE",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function fetchModelInstances(): Promise<ModelInstancesData> {
+  const result = await adminFetch<ApiSuccess<ModelInstancesData>>("/api/admin/model-instances");
+  return result.data;
 }

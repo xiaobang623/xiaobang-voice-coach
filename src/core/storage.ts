@@ -24,6 +24,10 @@ export interface PersistSessionInput {
   report: ReportJSON;
 }
 
+export interface PersistGuestSessionInput extends PersistSessionInput {
+  guestId: string;
+}
+
 const VALID_LEVELS = new Set<UserLevel>(["beginner", "intermediate", "advanced"]);
 
 function isRegisteredUser(user: { id: string; is_anonymous?: boolean } | null | undefined): user is {
@@ -190,6 +194,34 @@ export async function persistSessionReport(input: PersistSessionInput): Promise<
   }
 
   invalidateGrowthCache();
+}
+
+/** Persist a finished guest conversation via server API (service role). */
+export async function persistGuestSessionReport(input: PersistGuestSessionInput): Promise<void> {
+  try {
+    const response = await fetch("/api/persist-session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sessionId: input.sessionId,
+        guestId: input.guestId,
+        topic: input.topic,
+        transcript: input.transcript,
+        durationSeconds: input.durationSeconds,
+        report: input.report,
+      }),
+    });
+
+    if (!response.ok) {
+      const detail = await response.text();
+      console.warn("[storage] failed to save guest session:", detail || response.status);
+    }
+  } catch (error) {
+    console.warn(
+      "[storage] failed to save guest session:",
+      error instanceof Error ? error.message : error,
+    );
+  }
 }
 
 /** Load the learner memory profile for the signed-in registered user. */

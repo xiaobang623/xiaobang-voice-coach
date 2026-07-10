@@ -21,6 +21,19 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, ""),
       },
+      "/api/persist-session": {
+        target: "http://localhost:3099",
+        changeOrigin: true,
+      },
+      // Local api/*.js handlers. Run: npm run dev:api
+      "/api/admin": {
+        target: "http://localhost:3099",
+        changeOrigin: true,
+      },
+      "/api/voice-backend-config": {
+        target: "http://localhost:3099",
+        changeOrigin: true,
+      },
     },
   },
 });

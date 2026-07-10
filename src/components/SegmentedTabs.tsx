@@ -15,7 +15,7 @@ export function SegmentedTabs<T extends string>({
     <div
       role="tablist"
       aria-label={ariaLabel}
-      className="flex rounded-full bg-bg-warm p-1"
+      className="flex rounded-full bg-bg-warm p-1.5"
     >
       {tabs.map((tab) => {
         const isActive = active === tab.id;

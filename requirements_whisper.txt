@@ -1,0 +1,18 @@
+# Whisper ASR 服务依赖
+# 安装: pip install -r requirements_whisper.txt
+
+# ASR 核心
+openai-whisper>=20231117
+
+# HTTP 服务
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.9   # FastAPI 文件上传必须
+
+# 数据校验
+pydantic>=2.0.0
+
+# 音频格式处理（webm/opus 需要 ffmpeg，见下方说明）
+# ffmpeg 不是 pip 包，需要系统级安装:
+#   macOS:  brew install ffmpeg
+#   Ubuntu: sudo apt install ffmpeg

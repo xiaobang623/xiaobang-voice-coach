@@ -1,10 +1,12 @@
-import { SPEED_OPTIONS, VOICE_OPTIONS } from "../config/session";
-import type { UserPreferences } from "../types";
+import { SPEED_OPTIONS } from "../config/session";
+import type { UserPreferences, VoiceOption } from "../types";
 import { Card } from "./ui/Card";
 import { VoiceAvatar } from "./ui/VoiceAvatar";
 
 export interface PracticePreferencesPanelProps {
   preferences: UserPreferences;
+  voiceOptions: VoiceOption[];
+  showVoicePicker: boolean;
   onVoiceChange: (voiceType: string) => void;
   onSpeedChange: (speedRatio: number) => void;
   onShowSubtitleChange: (showSubtitle: boolean) => void;
@@ -13,6 +15,8 @@ export interface PracticePreferencesPanelProps {
 
 export function PracticePreferencesPanel({
   preferences,
+  voiceOptions,
+  showVoicePicker,
   onVoiceChange,
   onSpeedChange,
   onShowSubtitleChange,
@@ -20,31 +24,33 @@ export function PracticePreferencesPanel({
 }: PracticePreferencesPanelProps) {
   return (
     <Card variant="elevated" className="space-y-6 p-5">
-      <div>
-        <p className="text-sm font-medium text-text">默认音色</p>
-        <p className="mt-0.5 text-xs text-text-muted">每次开始练习时使用</p>
-        <div className="mt-3 grid grid-cols-2 gap-2">
-          {VOICE_OPTIONS.map((voice) => {
-            const active = preferences.voiceType === voice.id;
-            return (
-              <button
-                key={voice.id}
-                type="button"
-                disabled={disabled}
-                onClick={() => onVoiceChange(voice.id)}
-                className={`flex items-center gap-2.5 rounded-2xl border px-3 py-2.5 text-left text-sm transition disabled:cursor-not-allowed disabled:opacity-50 ${
-                  active
-                    ? "border-accent bg-surface-raised text-text shadow-card"
-                    : "border-border-subtle bg-surface/60 text-text-secondary hover:border-accent-muted"
-                }`}
-              >
-                <VoiceAvatar voiceId={voice.id} label={voice.label} size="sm" />
-                <span className="font-medium">{voice.label}</span>
-              </button>
-            );
-          })}
+      {showVoicePicker ? (
+        <div>
+          <p className="text-sm font-medium text-text">默认音色</p>
+          <p className="mt-0.5 text-xs text-text-muted">每次开始练习时使用</p>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            {voiceOptions.map((voice) => {
+              const active = preferences.voiceType === voice.id;
+              return (
+                <button
+                  key={voice.id}
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => onVoiceChange(voice.id)}
+                  className={`flex items-center gap-2.5 rounded-2xl border px-3 py-2.5 text-left text-sm transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                    active
+                      ? "border-accent bg-surface-raised text-text shadow-card"
+                      : "border-border-subtle bg-surface/60 text-text-secondary hover:border-accent-muted"
+                  }`}
+                >
+                  <VoiceAvatar voiceId={voice.id} label={voice.label} size="sm" />
+                  <span className="font-medium">{voice.label}</span>
+                </button>
+              );
+            })}
+          </div>
         </div>
-      </div>
+      ) : null}
 
       <div>
         <p className="text-sm font-medium text-text">默认语速</p>

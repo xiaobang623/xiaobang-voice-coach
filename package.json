@@ -5,9 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:api": "node dev-api-server.js",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "proxy": "node proxy.js",
+    "selfhosted-voice": "node backend/server.js",
+    "test:selfhosted": "node scripts/test-selfhosted-pipeline.mjs",
     "start": "node proxy.js",
     "report-server": "node report-server.js",
     "db:migrate": "node scripts/db-migrate.mjs"

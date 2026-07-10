@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
-import type { AdminUserRow, Pagination } from "./types";
+import type { AdminUser, AdminUserRow, Pagination } from "./types";
 import { fetchAdminUsers, formatCurrency, formatDateTime } from "./api";
+import { VoiceConfigModal } from "./VoiceConfigModal";
 
 interface UserListTableProps {
+  user: AdminUser;
   onSelectUser: (userId: string) => void;
 }
 
-export function UserListTable({ onSelectUser }: UserListTableProps) {
+export function UserListTable({ user, onSelectUser }: UserListTableProps) {
   const [rows, setRows] = useState<AdminUserRow[]>([]);
   const [pagination, setPagination] = useState<Pagination>({ page: 1, limit: 20, total: 0 });
   const [search, setSearch] = useState("");
@@ -14,6 +16,7 @@ export function UserListTable({ onSelectUser }: UserListTableProps) {
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [configTarget, setConfigTarget] = useState<AdminUserRow | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -96,18 +99,19 @@ export function UserListTable({ onSelectUser }: UserListTableProps) {
               <th className="px-2 py-2 font-medium">对话次数</th>
               <th className="px-2 py-2 font-medium">总成本</th>
               <th className="px-2 py-2 font-medium">最近对话</th>
+              <th className="px-2 py-2 font-medium">操作</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={6} className="px-2 py-6 text-center text-text-muted">
+                <td colSpan={7} className="px-2 py-6 text-center text-text-muted">
                   加载中…
                 </td>
               </tr>
             ) : rows.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-2 py-6 text-center text-text-muted">
+                <td colSpan={7} className="px-2 py-6 text-center text-text-muted">
                   暂无用户
                 </td>
               </tr>
@@ -131,6 +135,15 @@ export function UserListTable({ onSelectUser }: UserListTableProps) {
                   <td className="px-2 py-2">{row.session_count}</td>
                   <td className="px-2 py-2">{formatCurrency(row.total_cost)}</td>
                   <td className="px-2 py-2">{formatDateTime(row.last_session)}</td>
+                  <td className="px-2 py-2">
+                    <button
+                      type="button"
+                      onClick={() => setConfigTarget(row)}
+                      className="text-xs text-accent hover:underline"
+                    >
+                      语音配置
+                    </button>
+                  </td>
                 </tr>
               ))
             )}
@@ -159,6 +172,17 @@ export function UserListTable({ onSelectUser }: UserListTableProps) {
           下一页
         </button>
       </div>
+
+      {configTarget ? (
+        <VoiceConfigModal
+          user={user}
+          scopeType="user"
+          userId={configTarget.is_guest ? undefined : configTarget.id}
+          guestId={configTarget.is_guest ? configTarget.id : undefined}
+          title={`用户语音配置 · ${configTarget.nickname}`}
+          onClose={() => setConfigTarget(null)}
+        />
+      ) : null}
     </section>
   );
 }

@@ -1,5 +1,12 @@
 import { requireAdmin } from "../_lib/admin-auth.js";
 import { getAdminSupabase } from "../_lib/admin-supabase.js";
+import {
+  aggregateCostLog,
+  buildCostByProvider,
+  finalizeProviderRow,
+  formatModelDisplayName,
+  getCostProviderMeta,
+} from "../_lib/cost-providers.js";
 import { setJsonCors, json } from "../_lib/http.js";
 
 function defaultDateFrom() {
@@ -57,19 +64,23 @@ export default async function handler(req, res) {
       totalTokens += tokens;
       totalCost += cost;
 
+      const providerMeta = getCostProviderMeta(log.api_provider);
+
       const modelKey = `${log.api_provider}::${log.model_name}`;
       const modelRow = byModelMap.get(modelKey) ?? {
         model_name: log.model_name,
+        model_label: formatModelDisplayName(log.api_provider, log.model_name),
         api_provider: log.api_provider,
+        provider_label: providerMeta.label,
+        usage_kind: providerMeta.usage_kind,
+        rate_hint: providerMeta.rate_hint(),
         call_count: 0,
         total_tokens: 0,
         total_duration_seconds: 0,
+        total_characters: 0,
         total_cost: 0,
       };
-      modelRow.call_count += 1;
-      modelRow.total_tokens += tokens;
-      modelRow.total_duration_seconds += Number(log.duration_seconds ?? 0);
-      modelRow.total_cost += cost;
+      aggregateCostLog(modelRow, log);
       byModelMap.set(modelKey, modelRow);
 
       const actorKey = log.user_id ? `user:${log.user_id}` : `guest:${log.guest_id ?? "unknown"}`;
@@ -90,11 +101,10 @@ export default async function handler(req, res) {
     }
 
     const byModel = [...byModelMap.values()]
-      .map((row) => ({
-        ...row,
-        total_cost: Number(row.total_cost.toFixed(2)),
-      }))
+      .map(finalizeProviderRow)
       .sort((a, b) => b.total_cost - a.total_cost);
+
+    const byProvider = buildCostByProvider(logs);
 
     const userIds = [
       ...new Set(
@@ -137,6 +147,7 @@ export default async function handler(req, res) {
       data: {
         total_cost: Number(totalCost.toFixed(2)),
         total_tokens: totalTokens,
+        by_provider: byProvider,
         by_model: byModel,
         by_user: byUser,
       },

@@ -10,6 +10,7 @@ interface GenerateReportBody {
   sessionId: string;
   transcript: string;
   durationSeconds: number;
+  taskGoals?: Array<{ id: string; desc: string }>;
 }
 
 Deno.serve(async (req) => {
@@ -49,6 +50,11 @@ Deno.serve(async (req) => {
     });
   }
 
+  const taskGoalsBlock =
+    Array.isArray(body.taskGoals) && body.taskGoals.length > 0
+      ? `\n\nTask goals to judge:\n${body.taskGoals.map((g) => `- [${g.id}] ${g.desc}`).join("\n")}`
+      : "";
+
   const deepseekResponse = await fetch("https://api.deepseek.com/chat/completions", {
     method: "POST",
     headers: {
@@ -63,7 +69,7 @@ Deno.serve(async (req) => {
         { role: "system", content: SYSTEM_PROMPT },
         {
           role: "user",
-          content: `sessionId: ${body.sessionId}\ndurationSeconds: ${body.durationSeconds}\n\nTranscript:\n${body.transcript}`,
+          content: `sessionId: ${body.sessionId}\ndurationSeconds: ${body.durationSeconds}${taskGoalsBlock}\n\nTranscript:\n${body.transcript}`,
         },
       ],
     }),
@@ -99,6 +105,7 @@ Deno.serve(async (req) => {
   const report = postProcessReport(raw, {
     sessionId: body.sessionId,
     durationSeconds: body.durationSeconds,
+    taskGoals: body.taskGoals,
   });
 
   return new Response(JSON.stringify(report), {

@@ -1,4 +1,4 @@
-import type { UserPreferences } from "../types";
+import type { UserPreferences, VoiceOption } from "../types";
 import {
   DEFAULT_SPEED_RATIO,
   DEFAULT_VOICE_TYPE,
@@ -12,16 +12,20 @@ export const DEFAULT_USER_PREFERENCES: UserPreferences = {
   showSubtitle: true,
 };
 
-export function normalizeUserPreferences(raw: unknown): UserPreferences {
+export function normalizeUserPreferences(
+  raw: unknown,
+  allowedVoices: VoiceOption[] = VOICE_OPTIONS,
+): UserPreferences {
   if (!raw || typeof raw !== "object") {
     return { ...DEFAULT_USER_PREFERENCES };
   }
 
   const record = raw as Record<string, unknown>;
   const voiceCandidate = String(record.voiceType ?? DEFAULT_VOICE_TYPE);
-  const voiceType = VOICE_OPTIONS.some((voice) => voice.id === voiceCandidate)
+  const fallbackVoice = allowedVoices[0]?.id ?? DEFAULT_VOICE_TYPE;
+  const voiceType = allowedVoices.some((voice) => voice.id === voiceCandidate)
     ? voiceCandidate
-    : DEFAULT_VOICE_TYPE;
+    : fallbackVoice;
 
   const speedCandidate = Number(record.speedRatio ?? DEFAULT_SPEED_RATIO);
   const speedRatio = SPEED_OPTIONS.some((speed) => speed.ratio === speedCandidate)

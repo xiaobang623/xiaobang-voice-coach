@@ -5,12 +5,12 @@ type ButtonSize = "sm" | "md" | "lg";
 
 const VARIANT_CLASS: Record<ButtonVariant, string> = {
   primary:
-    "bg-accent text-surface shadow-card hover:bg-accent-hover active:scale-[0.98]",
+    "bg-accent text-surface shadow-[var(--shadow-pop)] hover:bg-accent-hover hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.97]",
   secondary:
-    "bg-surface-raised text-text-secondary border border-border hover:bg-surface active:scale-[0.98]",
-  ghost: "text-text-secondary hover:bg-bg-warm/60 hover:text-text",
+    "bg-surface-raised text-text-secondary border border-border hover:bg-surface hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.94]",
+  ghost: "text-text-secondary hover:bg-bg-warm/70 hover:text-text active:scale-[0.94]",
   outline:
-    "border border-border bg-surface-raised/80 text-text-secondary hover:bg-surface shadow-card",
+    "border border-border bg-surface-raised/80 text-text-secondary hover:bg-surface shadow-card active:scale-[0.94]",
 };
 
 const SIZE_CLASS: Record<ButtonSize, string> = {
@@ -38,7 +38,7 @@ export function Button({
   return (
     <button
       type={type}
-      className={`inline-flex items-center justify-center gap-2 rounded-full font-medium transition-all disabled:cursor-not-allowed disabled:opacity-50 ${VARIANT_CLASS[variant]} ${SIZE_CLASS[size]} ${fullWidth ? "w-full" : ""} ${className}`}
+      className={`inline-flex items-center justify-center gap-2 rounded-[10px] font-medium tracking-tight transition-all duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0 ${VARIANT_CLASS[variant]} ${SIZE_CLASS[size]} ${fullWidth ? "w-full" : ""} ${className}`}
       {...props}
     >
       {children}

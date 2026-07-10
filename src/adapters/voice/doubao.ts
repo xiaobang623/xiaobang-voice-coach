@@ -537,7 +537,7 @@ export class DoubaoVoiceAdapter implements VoiceAdapter {
         bot_name: "Xiaobang Coach",
         system_role: systemRole,
         extra: {
-          model: "1.2.1.1",
+          model: this.config?.modelOverrides?.doubaoDialogModel ?? "1.2.1.1",
         },
       },
       extra: {

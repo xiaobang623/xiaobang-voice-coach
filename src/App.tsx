@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AppNavBar } from "./components/AppNavBar";
 import { BottomTabBar, type MainTab } from "./components/BottomTabBar";
+import { GrowthPanel } from "./components/GrowthView";
 import { MeView } from "./components/MeView";
 import { TopicSelector } from "./components/TopicSelector";
 import { VoiceSession } from "./components/VoiceSession";
@@ -11,59 +13,31 @@ import {
 import { extractMemory } from "./core/memory";
 import { resolveUsageActor, logApiUsage } from "./core/usageLog";
 import { useVoiceSession } from "./hooks/useVoiceSession";
+import { useVoiceProfile } from "./hooks/useVoiceProfile";
 import { useAuth } from "./hooks/useAuth";
 import { useUserPreferences } from "./hooks/useUserPreferences";
-import { loadUserMemory, loadGrowthPageData, persistSessionReport, upsertUserMemory } from "./core/storage";
+import { pickVoiceType, showsVoicePicker } from "./config/voices";
+import { loadUserMemory, loadGrowthPageData, persistGuestSessionReport, persistSessionReport, upsertUserMemory } from "./core/storage";
 import {
   GROWTH_CACHE_STALE_MS,
   growthCacheAgeMs,
   writeGrowthCache,
 } from "./core/growthCache";
+import { CHAT_TOPICS } from "./config/chatTopics";
+import { findTaskScenario } from "./config/taskScenarios";
+import { scenarioLabel } from "./config/topics";
 import {
   buildSystemPrompt,
+  buildTaskSystemPrompt,
 } from "./config/session";
-import type { MemorySummary, ReportJSON, SessionSettings, TopicOption } from "./types";
-
-const TOPICS: TopicOption[] = [
-  {
-    id: "daily",
-    title: "今天过得怎么样",
-    description: "从日常小事聊起，最放松的开场",
-    openingHint: "小榜会先问你今天过得怎么样，比如 How has your day been?",
-    promptSeed:
-      "start by asking the user how their day has been and gently keep the small talk going.",
-  },
-  {
-    id: "travel",
-    title: "想去的地方",
-    description: "聊聊旅行计划，或者印象最深的一次出行",
-    openingHint: "小榜会问你下次想去哪，或者最难忘的一次旅行",
-    promptSeed:
-      "start by asking where the user would love to travel next, or their most memorable trip.",
-  },
-  {
-    id: "food",
-    title: "吃点什么好",
-    description: "推荐一家店、一道菜，或者自己做饭的故事",
-    openingHint: "小榜会问你最爱吃什么、常去哪家店，或者会不会自己做饭",
-    promptSeed:
-      "start by asking the user about food they love — a favorite dish, restaurant, or cooking they do.",
-  },
-  {
-    id: "work",
-    title: "工作与生活",
-    description: "最近在忙什么，有什么想吐槽或分享的",
-    openingHint: "小榜会问你最近在忙什么、工作节奏怎么样",
-    promptSeed:
-      "start by asking what the user has been busy with at work lately and how they feel about it.",
-  },
-];
+import type { MemorySummary, ReportJSON, SessionSettings, TaskScenario } from "./types";
 
 type PracticeScreen = "topics" | "chat";
 
 function App() {
   const { isConfigured, isAnonymous, userId } = useAuth();
   const { preferences, setVoiceType, setSpeedRatio, setShowSubtitle } = useUserPreferences();
+  const { voiceProfile, isLoading: voiceProfileLoading } = useVoiceProfile();
   const [mainTab, setMainTab] = useState<MainTab>("practice");
   const [practiceScreen, setPracticeScreen] = useState<PracticeScreen>("topics");
   const voice = useVoiceSession();
@@ -76,8 +50,15 @@ function App() {
 
   const [topicId, setTopicId] = useState<string | null>(null);
   const [accountDeepLink, setAccountDeepLink] = useState(0);
+  const [accountReturnTab, setAccountReturnTab] = useState<MainTab | null>(null);
 
   const inChat = practiceScreen === "chat";
+
+  useEffect(() => {
+    if (mainTab !== "me" && accountReturnTab) {
+      setAccountReturnTab(null);
+    }
+  }, [mainTab, accountReturnTab]);
 
   useEffect(() => {
     if (!isConfigured || isAnonymous) {
@@ -126,14 +107,46 @@ function App() {
     [voice.messages],
   );
 
+  const resolvedVoiceType = useMemo(
+    () => pickVoiceType(preferences.voiceType, voiceProfile),
+    [preferences.voiceType, voiceProfile],
+  );
+
+  useEffect(() => {
+    if (voiceProfileLoading) {
+      return;
+    }
+    const isSiliconFlow = voiceProfile.provider.startsWith("siliconflow-");
+    if (isSiliconFlow && preferences.voiceType === "benjamin") {
+      setVoiceType("diana");
+      return;
+    }
+    // anna 曾是 SiliconFlow 默认音色；迁移到新的默认 diana
+    if (isSiliconFlow && preferences.voiceType === "anna") {
+      setVoiceType("diana");
+      return;
+    }
+    if (resolvedVoiceType !== preferences.voiceType) {
+      setVoiceType(resolvedVoiceType);
+    }
+  }, [voiceProfileLoading, voiceProfile.provider, preferences.voiceType, resolvedVoiceType, setVoiceType]);
+
   const sessionSettings = useMemo<SessionSettings>(() => {
-    const topic = TOPICS.find((t) => t.id === topicId);
+    const taskScenario = topicId ? findTaskScenario(topicId) : undefined;
+    if (taskScenario) {
+      return {
+        voiceType: resolvedVoiceType,
+        speedRatio: preferences.speedRatio,
+        systemPrompt: buildTaskSystemPrompt(taskScenario, userMemory),
+      };
+    }
+    const topic = CHAT_TOPICS.find((t) => t.id === topicId);
     return {
-      voiceType: preferences.voiceType,
+      voiceType: resolvedVoiceType,
       speedRatio: preferences.speedRatio,
       systemPrompt: buildSystemPrompt(topic?.promptSeed, userMemory),
     };
-  }, [preferences.voiceType, preferences.speedRatio, topicId, userMemory]);
+  }, [resolvedVoiceType, preferences.speedRatio, topicId, userMemory]);
 
   const usageActor = useMemo(
     () => resolveUsageActor({ userId, isAnonymous }),
@@ -147,7 +160,7 @@ function App() {
     return Math.max(1, Math.floor((Date.now() - voice.conversationStartedAt) / 1000));
   }, [voice.conversationStartedAt]);
 
-  const logDoubaoUsage = useCallback(async () => {
+  const logVoiceUsage = useCallback(async () => {
     const durationSeconds = getVoiceDurationSeconds();
     if (durationSeconds < 1) {
       return;
@@ -159,6 +172,12 @@ function App() {
     }
     doubaoLoggedSessionRef.current = sessionId;
 
+    const backend = voice.activeBackend ?? "doubao";
+    if (backend === "selfhosted") {
+      // DeepSeek / SiliconFlow usage is logged by the self-hosted voice server on disconnect.
+      return;
+    }
+
     await logApiUsage({
       userId: usageActor.userId,
       guestId: usageActor.guestId,
@@ -167,7 +186,7 @@ function App() {
       modelName: "volc.speech.dialog",
       durationSeconds,
     });
-  }, [getVoiceDurationSeconds, usageActor.guestId, usageActor.userId]);
+  }, [getVoiceDurationSeconds, usageActor.guestId, usageActor.userId, voice.activeBackend]);
 
   const handleSelectTopic = useCallback((selectedTopicId: string) => {
     setTopicId(selectedTopicId);
@@ -180,19 +199,19 @@ function App() {
   }, []);
 
   const handleExitChat = useCallback(() => {
-    void logDoubaoUsage();
+    void logVoiceUsage();
     voice.clearConversation();
     setReport(null);
     setReportError(null);
     sessionIdRef.current = crypto.randomUUID();
     doubaoLoggedSessionRef.current = null;
     setPracticeScreen("topics");
-  }, [voice, logDoubaoUsage]);
+  }, [voice, logVoiceUsage]);
 
   const handleEndAndReport = useCallback(async () => {
     const transcript = buildTranscriptFromMessages(voice.messages);
     const durationSeconds = getVoiceDurationSeconds();
-    await logDoubaoUsage();
+    await logVoiceUsage();
     voice.stop();
 
     if (!transcript.trim()) {
@@ -204,12 +223,14 @@ function App() {
     setReportError(null);
 
     try {
+      const taskScenario = topicId ? findTaskScenario(topicId) : undefined;
       const nextReport = await generateReport({
         sessionId: sessionIdRef.current,
         transcript,
         durationSeconds: durationSeconds || 1,
         userId: usageActor.userId ?? undefined,
         guestId: usageActor.guestId ?? undefined,
+        taskGoals: taskScenario?.goals.map((g) => ({ id: g.id, desc: g.desc })),
       });
       setReport(nextReport);
 
@@ -239,23 +260,32 @@ function App() {
             memoryError instanceof Error ? memoryError.message : memoryError,
           );
         }
+      } else if (usageActor.guestId) {
+        await persistGuestSessionReport({
+          sessionId: sessionIdRef.current,
+          guestId: usageActor.guestId,
+          topic: topicId,
+          transcript,
+          durationSeconds,
+          report: nextReport,
+        });
       }
     } catch (error) {
       setReportError(error instanceof Error ? error.message : String(error));
     } finally {
       setReportLoading(false);
     }
-  }, [voice, topicId, isAnonymous, userMemory, usageActor, getVoiceDurationSeconds, logDoubaoUsage]);
+  }, [voice, topicId, isAnonymous, userMemory, usageActor, getVoiceDurationSeconds, logVoiceUsage]);
 
-  const sessionLabel = useMemo(() => {
-    if (!topicId) {
-      return "自由畅聊";
-    }
-    return TOPICS.find((t) => t.id === topicId)?.title ?? "自由畅聊";
-  }, [topicId]);
+  const sessionLabel = useMemo(() => scenarioLabel(topicId), [topicId]);
 
   const activeTopic = useMemo(
-    () => (topicId ? (TOPICS.find((t) => t.id === topicId) ?? null) : null),
+    () => (topicId ? (CHAT_TOPICS.find((t) => t.id === topicId) ?? null) : null),
+    [topicId],
+  );
+
+  const activeTask = useMemo<TaskScenario | null>(
+    () => (topicId ? (findTaskScenario(topicId) ?? null) : null),
     [topicId],
   );
 
@@ -266,62 +296,73 @@ function App() {
     setMainTab(tab);
   }, [inChat]);
 
+  const handleGoToRecord = useCallback(() => {
+    setMainTab("record");
+  }, []);
+
   const handleGoToAccount = useCallback(() => {
+    setAccountReturnTab("practice");
     setMainTab("me");
     setAccountDeepLink((count) => count + 1);
   }, []);
 
-  return (
-    <div className="min-h-screen bg-bg text-text">
-      <header className="sticky top-0 z-30 border-b border-border-subtle/70 bg-bg/90 backdrop-blur-xl">
-        <div className="page-shell flex items-center gap-3 py-4">
-          {inChat ? (
-            <>
-              <button
-                type="button"
-                onClick={handleExitChat}
-                className="flex shrink-0 items-center gap-0.5 rounded-full px-2 py-1.5 text-sm text-text-secondary transition-colors hover:bg-bg-warm/70 hover:text-text"
-              >
-                ← 返回
-              </button>
-              <p className="min-w-0 flex-1 truncate text-center text-sm font-medium text-text">
-                {sessionLabel}
-              </p>
-              <span className="w-14 shrink-0" aria-hidden="true" />
-            </>
-          ) : (
-            <div className="flex items-baseline gap-2">
-              <h1 className="text-lg font-semibold text-text">小榜</h1>
-              <span className="text-sm text-text-muted">陪你说英语</span>
-            </div>
-          )}
-        </div>
-      </header>
+  const handleAccountExit = useCallback(() => {
+    const returnTab = accountReturnTab;
+    setAccountReturnTab(null);
+    setAccountDeepLink(0);
+    if (returnTab) {
+      setMainTab(returnTab);
+    }
+  }, [accountReturnTab]);
 
-      <main className={`page-shell ${inChat ? "pb-6 pt-1" : "pb-28 pt-2"}`}>
+  const handleAccountDeepLinkConsumed = useCallback(() => {
+    setAccountDeepLink(0);
+  }, []);
+
+  return (
+    <div className="app-shell flex min-h-dvh flex-col bg-bg text-text">
+      {!inChat ? (
+        <AppNavBar
+          active={mainTab}
+          onChange={handleMainTabChange}
+          showLogin={isConfigured && isAnonymous}
+          onLogin={handleGoToAccount}
+        />
+      ) : null}
+
+      {inChat ? (
+        <header className="app-top-bar sticky top-0 z-30 border-b border-border-subtle/70 bg-bg/90 backdrop-blur-xl">
+          <div className="page-shell flex items-center gap-3 py-3">
+            <button
+              type="button"
+              onClick={handleExitChat}
+              className="flex shrink-0 items-center gap-0.5 rounded-full px-2 py-1.5 text-sm text-text-secondary transition-colors hover:bg-bg-warm/70 hover:text-text active:scale-95"
+            >
+              ← 返回
+            </button>
+            <p className="min-w-0 flex-1 truncate text-center text-sm font-medium text-text">
+              {sessionLabel}
+            </p>
+            <span className="w-14 shrink-0" aria-hidden="true" />
+          </div>
+        </header>
+      ) : null}
+
+      <main
+        className={`page-shell flex flex-col ${
+          inChat
+            ? "min-h-0 flex-1 pb-2 pt-0 md:py-4"
+            : "pb-[calc(5.5rem+env(safe-area-inset-bottom))] pt-0 md:pb-8 md:pt-2"
+        }`}
+      >
         {mainTab === "practice" && practiceScreen === "topics" ? (
-          <>
-            {isConfigured && isAnonymous ? (
-              <div className="mb-5 rounded-2xl border border-border-subtle bg-surface px-4 py-3.5">
-                <p className="text-sm text-text-secondary">游客模式 · 可直接开聊</p>
-                <p className="mt-1 text-xs leading-relaxed text-text-muted">
-                  练习记录和成长记忆需要登录后才会保存
-                </p>
-                <button
-                  type="button"
-                  onClick={handleGoToAccount}
-                  className="mt-3 w-full rounded-full border border-accent/30 bg-accent/10 px-4 py-2.5 text-sm font-medium text-accent transition-colors hover:bg-accent/15"
-                >
-                  登录 / 注册
-                </button>
-              </div>
-            ) : null}
-            <TopicSelector
-              topics={TOPICS}
-              onSelectTopic={handleSelectTopic}
-              onFreeTalk={handleFreeTalk}
-            />
-          </>
+          <TopicSelector
+            onSelectTopic={handleSelectTopic}
+            onFreeTalk={handleFreeTalk}
+            showGuestHint={isConfigured && isAnonymous}
+            onGoToAccount={handleGoToAccount}
+            onGoToRecord={handleGoToRecord}
+          />
         ) : null}
 
         {mainTab === "practice" && practiceScreen === "chat" ? (
@@ -330,10 +371,13 @@ function App() {
             settings={sessionSettings}
             sessionLabel={sessionLabel}
             activeTopic={activeTopic}
+            activeTask={activeTask}
             appSessionId={sessionIdRef.current}
             usageUserId={usageActor.userId}
             usageGuestId={usageActor.guestId}
-            voiceType={preferences.voiceType}
+            voiceType={resolvedVoiceType}
+            voiceOptions={voiceProfile.voices}
+            showVoicePicker={showsVoicePicker(voiceProfile)}
             onVoiceChange={setVoiceType}
             speedRatio={preferences.speedRatio}
             onSpeedChange={setSpeedRatio}
@@ -348,7 +392,30 @@ function App() {
           />
         ) : null}
 
-        {mainTab === "me" ? <MeView accountDeepLink={accountDeepLink} /> : null}
+        {mainTab === "me" ? (
+          <MeView
+            accountDeepLink={accountDeepLink}
+            onAccountExit={accountReturnTab ? handleAccountExit : undefined}
+            onAccountDeepLinkConsumed={handleAccountDeepLinkConsumed}
+          />
+        ) : null}
+
+        {mainTab === "record" ? (
+          <section className="animate-fade-up py-2">
+            <div className="mb-7 flex items-end justify-between gap-4">
+              <div>
+                <p className="text-xs font-medium tracking-wide text-text-muted">语言能力档案</p>
+                <h2 className="mt-2 font-display text-[1.65rem] font-medium tracking-tight text-text">
+                  记录每一次开口
+                </h2>
+              </div>
+              <div className="hidden rounded-full bg-bg-warm px-3 py-1.5 text-xs font-medium text-text-muted md:inline-flex">
+                最近 7 天
+              </div>
+            </div>
+            <GrowthPanel isGuest={isAnonymous} onGoToAccount={handleGoToAccount} />
+          </section>
+        ) : null}
       </main>
 
       {!inChat ? <BottomTabBar active={mainTab} onChange={handleMainTabChange} /> : null}

@@ -54,6 +54,11 @@ export default async function handler(req, res) {
   }
 
   try {
+    const taskGoalsBlock =
+      Array.isArray(input.taskGoals) && input.taskGoals.length > 0
+        ? `\n\nTask goals to judge:\n${input.taskGoals.map((g) => `- [${g.id}] ${g.desc}`).join("\n")}`
+        : "";
+
     const deepseekResponse = await fetch("https://api.deepseek.com/chat/completions", {
       method: "POST",
       headers: {
@@ -68,7 +73,7 @@ export default async function handler(req, res) {
           { role: "system", content: SYSTEM_PROMPT },
           {
             role: "user",
-            content: `sessionId: ${input.sessionId}\ndurationSeconds: ${input.durationSeconds}\n\nTranscript:\n${input.transcript}`,
+            content: `sessionId: ${input.sessionId}\ndurationSeconds: ${input.durationSeconds}${taskGoalsBlock}\n\nTranscript:\n${input.transcript}`,
           },
         ],
       }),

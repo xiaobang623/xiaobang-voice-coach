@@ -7,6 +7,8 @@ export interface GenerateReportInput {
   durationSeconds: number;
   userId?: string;
   guestId?: string;
+  /** Task goals to judge when session is in task mode. */
+  taskGoals?: Array<{ id: string; desc: string }>;
 }
 
 export function buildTranscriptFromMessages(messages: VoiceSessionMessage[]): string {
@@ -90,5 +92,7 @@ export async function generateReport(input: GenerateReportInput): Promise<Report
     durationSeconds: report.durationSeconds ?? input.durationSeconds,
     userLevel: report.userLevel ?? "intermediate",
     corrections: Array.isArray(report.corrections) ? report.corrections : [],
+    ...(Array.isArray(report.taskResults) ? { taskResults: report.taskResults } : {}),
+    ...(report.taskScore ? { taskScore: report.taskScore } : {}),
   };
 }

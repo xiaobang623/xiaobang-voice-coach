@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { DoubaoVoiceAdapter } from "../adapters/voice/doubao";
-import type { BotMessageEvent, TranscriptEvent } from "../adapters/voice/types";
-import { TtsPcmPlayer } from "./ttsPcmPlayer";
+import { SelfHostedVoiceAdapter } from "../adapters/voice/selfhosted";
+import type { BotMessageEvent, TranscriptEvent, VoiceAdapter, VoiceModelOverrides } from "../adapters/voice/types";
+import { TtsPcmPlayer, type TtsPlayerTuning } from "./ttsPcmPlayer";
 
 export type VoiceSessionStatus = "connecting" | "active" | "ended";
 
@@ -23,6 +24,8 @@ export interface VoiceSessionMessage {
   text: string;
   isFinal: boolean;
   timestamp: number;
+  /** Shown while the user is speaking, before cloud ASR returns text. */
+  isListeningDraft?: boolean;
 }
 
 export interface UseVoiceSessionResult {
@@ -33,6 +36,8 @@ export interface UseVoiceSessionResult {
   startedAt: number | null;
   /** When the current conversation thread began (survives reconnects). */
   conversationStartedAt: number | null;
+  /** Resolved voice backend for the active or last session. */
+  activeBackend: VoiceBackend | null;
   start: (options?: VoiceStartOptions) => Promise<void>;
   /** Dev typing-test: send text instead of speaking (ChatTextQuery). */
   sendTextQuery: (text: string) => void;
@@ -44,7 +49,92 @@ export interface UseVoiceSessionResult {
 
 const TTS_SAMPLE_RATE = 16000;
 const SILENCE_RMS_THRESHOLD = 0.01;
-const SILENCE_END_ASR_MS = 1200;
+/** Barge-in while bot audio is playing must be louder and sustained — one echo/noise frame used to wipe the whole buffered reply. */
+const BARGE_IN_RMS_THRESHOLD = 0.02;
+/** ~250ms at 4096-sample ScriptProcessor frames (48kHz). */
+const BARGE_IN_MIN_FRAMES = 3;
+const SILENCE_END_ASR_MS = 800;
+/** Ignore ultra-short noise bursts before ending a turn. */
+const MIN_SPEECH_MS = 280;
+/** Show the listening bubble only after sustained speech — avoids noise false triggers. */
+const MIN_LISTENING_DRAFT_MS = 520;
+
+type VoiceBackend = "doubao" | "selfhosted";
+
+/** Selfhosted TTS (SiliconFlow/CosyVoice) streams in bursts with gaps up to ~0.9s — needs far more buffer than Doubao. */
+const TTS_TUNING: Record<VoiceBackend, TtsPlayerTuning> = {
+  doubao: { primeMs: 220, targetAheadMs: 320 },
+  selfhosted: { primeMs: 600, targetAheadMs: 1200 },
+};
+
+export interface ResolvedVoiceConfig {
+  backend: VoiceBackend;
+  modelOverrides: VoiceModelOverrides;
+}
+
+interface VoiceConfigApiResponse {
+  backend?: VoiceBackend;
+  modelOverrides?: VoiceModelOverrides;
+  config?: {
+    doubao?: { dialogModel?: string };
+    selfhosted?: {
+      asrProvider?: string;
+      ttsProvider?: string;
+      siliconflowTtsVoice?: string;
+      whisperModel?: string;
+      deepseekModel?: string;
+      cosyvoiceModelKey?: string;
+    };
+  };
+}
+
+function createVoiceAdapter(backend: VoiceBackend): VoiceAdapter {
+  return backend === "selfhosted" ? new SelfHostedVoiceAdapter() : new DoubaoVoiceAdapter();
+}
+
+async function resolveVoiceConfig(options?: VoiceStartOptions): Promise<ResolvedVoiceConfig> {
+  const query = new URLSearchParams();
+  if (options?.userId) {
+    query.set("userId", options.userId);
+  }
+  if (options?.guestId) {
+    query.set("guestId", options.guestId);
+  }
+  if (options?.sessionId) {
+    query.set("sessionId", options.sessionId);
+  }
+
+  const endpoint = `/api/voice-backend-config${query.size > 0 ? `?${query.toString()}` : ""}`;
+
+  try {
+    const response = await fetch(endpoint, {
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!response.ok) {
+      return { backend: "doubao", modelOverrides: {} };
+    }
+    const text = await response.text();
+    if (!text.trim()) {
+      return { backend: "doubao", modelOverrides: {} };
+    }
+    const payload = JSON.parse(text) as VoiceConfigApiResponse;
+    const backend = payload.backend === "selfhosted" ? "selfhosted" : "doubao";
+    const modelOverrides: VoiceModelOverrides =
+      payload.modelOverrides ??
+      ({
+        doubaoDialogModel: payload.config?.doubao?.dialogModel,
+        asrProvider: payload.config?.selfhosted?.asrProvider,
+        ttsProvider: payload.config?.selfhosted?.ttsProvider,
+        siliconflowTtsVoice: payload.config?.selfhosted?.siliconflowTtsVoice,
+        whisperModel: payload.config?.selfhosted?.whisperModel,
+        deepseekModel: payload.config?.selfhosted?.deepseekModel,
+        cosyvoiceModelKey: payload.config?.selfhosted?.cosyvoiceModelKey,
+      } satisfies VoiceModelOverrides);
+    return { backend, modelOverrides };
+  } catch {
+    return { backend: "doubao", modelOverrides: {} };
+  }
+}
 
 function downsampleTo16k(input: Float32Array, sampleRate: number): Int16Array {
   if (sampleRate <= 16000) {
@@ -89,10 +179,11 @@ export function useVoiceSession(): UseVoiceSessionResult {
   const [hint, setHint] = useState<string | null>(null);
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [conversationStartedAt, setConversationStartedAt] = useState<number | null>(null);
+  const [activeBackend, setActiveBackend] = useState<VoiceBackend | null>(null);
 
   const hintTimerRef = useRef<number | null>(null);
   const statusRef = useRef<VoiceSessionStatus>("ended");
-  const adapterRef = useRef<DoubaoVoiceAdapter | null>(null);
+  const adapterRef = useRef<VoiceAdapter | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -102,8 +193,48 @@ export function useVoiceSession(): UseVoiceSessionResult {
   const ttsContextRef = useRef<AudioContext | null>(null);
   const ttsPlayerRef = useRef<TtsPcmPlayer | null>(null);
   const lastVoiceAtRef = useRef<number>(0);
+  const firstVoiceAtRef = useRef<number>(0);
+  const inSpeechRef = useRef<boolean>(false);
   const endAsrSentForSilenceRef = useRef<boolean>(false);
   const hasVoiceSinceEndAsrRef = useRef<boolean>(false);
+  const botRespondingRef = useRef<boolean>(false);
+  const bargeInVoicedFramesRef = useRef<number>(0);
+  const bargeInHeldChunksRef = useRef<ArrayBuffer[]>([]);
+  const tryEndAsrRef = useRef<(() => void) | null>(null);
+  const listeningDraftIdRef = useRef<string | null>(null);
+  const ensureListeningDraftRef = useRef<() => void>(() => {});
+  const clearListeningDraftRef = useRef<() => void>(() => {});
+
+  const clearListeningDraft = useCallback(() => {
+    const draftId = listeningDraftIdRef.current;
+    if (!draftId) {
+      return;
+    }
+    listeningDraftIdRef.current = null;
+    setMessages((previous) => previous.filter((message) => message.id !== draftId));
+  }, []);
+
+  const ensureListeningDraft = useCallback(() => {
+    if (listeningDraftIdRef.current) {
+      return;
+    }
+    const id = crypto.randomUUID();
+    listeningDraftIdRef.current = id;
+    setMessages((previous) => [
+      ...previous,
+      {
+        id,
+        role: "user" as const,
+        text: "",
+        isFinal: false,
+        timestamp: Date.now(),
+        isListeningDraft: true,
+      },
+    ]);
+  }, []);
+
+  ensureListeningDraftRef.current = ensureListeningDraft;
+  clearListeningDraftRef.current = clearListeningDraft;
 
   const teardownMic = useCallback(() => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
@@ -131,21 +262,28 @@ export function useVoiceSession(): UseVoiceSessionResult {
     if (hasVoiceSinceEndAsrRef.current) {
       adapterRef.current?.endAsr("stop");
     }
+    ttsPlayerRef.current?.reset();
     teardownMic();
     adapterRef.current?.disconnect();
     adapterRef.current = null;
     statusRef.current = "ended";
     lastVoiceAtRef.current = 0;
+    firstVoiceAtRef.current = 0;
+    inSpeechRef.current = false;
     endAsrSentForSilenceRef.current = false;
     hasVoiceSinceEndAsrRef.current = false;
+    botRespondingRef.current = false;
+    tryEndAsrRef.current = null;
+    clearListeningDraft();
     if (hintTimerRef.current !== null) {
       window.clearTimeout(hintTimerRef.current);
       hintTimerRef.current = null;
     }
     setHint(null);
     setStartedAt(null);
+    setActiveBackend(null);
     setStatus("ended");
-  }, [teardownMic]);
+  }, [teardownMic, clearListeningDraft]);
 
   const teardownAll = useCallback(() => {
     teardownConnection();
@@ -172,6 +310,7 @@ export function useVoiceSession(): UseVoiceSessionResult {
   }, [teardownConnection]);
 
   const clearConversation = useCallback(() => {
+    listeningDraftIdRef.current = null;
     teardownAll();
     setMessages([]);
     setErrorMessage(null);
@@ -183,7 +322,11 @@ export function useVoiceSession(): UseVoiceSessionResult {
       ttsContextRef.current = new AudioContext({ sampleRate: TTS_SAMPLE_RATE });
     }
     if (!ttsPlayerRef.current) {
-      ttsPlayerRef.current = new TtsPcmPlayer(ttsContextRef.current, TTS_SAMPLE_RATE);
+      const player = new TtsPcmPlayer(ttsContextRef.current, TTS_SAMPLE_RATE);
+      player.setOnIdle(() => {
+        tryEndAsrRef.current?.();
+      });
+      ttsPlayerRef.current = player;
     }
     return ttsPlayerRef.current;
   }, []);
@@ -192,6 +335,7 @@ export function useVoiceSession(): UseVoiceSessionResult {
     (audioData: ArrayBuffer) => {
       try {
         ensureTtsPlayer().enqueue(audioData);
+    void ttsContextRef.current?.resume();
       } catch {
         setErrorMessage("语音播放出了点问题，可以刷新页面再试。");
       }
@@ -207,7 +351,19 @@ export function useVoiceSession(): UseVoiceSessionResult {
         text: event.text,
         isFinal: event.isFinal,
         timestamp: event.timestamp,
+        isListeningDraft: false,
       };
+
+      const draftId = listeningDraftIdRef.current;
+      if (draftId) {
+        listeningDraftIdRef.current = null;
+        const draftIdx = previous.findIndex((entry) => entry.id === draftId);
+        if (draftIdx >= 0) {
+          const next = [...previous];
+          next[draftIdx] = { ...message, id: draftId };
+          return next;
+        }
+      }
 
       if (previous.length === 0) {
         return [message];
@@ -228,6 +384,7 @@ export function useVoiceSession(): UseVoiceSessionResult {
 
       if (!last.isFinal && event.isFinal) {
         // User finished speaking — clear any stale bot audio before the next reply.
+        botRespondingRef.current = true;
         ttsPlayerRef.current?.reset();
         const next = [...previous];
         next[realIdx] = { ...message, id: last.id };
@@ -235,6 +392,7 @@ export function useVoiceSession(): UseVoiceSessionResult {
       }
 
       if (event.isFinal) {
+        botRespondingRef.current = true;
         ttsPlayerRef.current?.reset();
       }
 
@@ -243,13 +401,37 @@ export function useVoiceSession(): UseVoiceSessionResult {
   }, []);
 
   const onBotMessage = useCallback((event: BotMessageEvent) => {
+    if (event.isFinal) {
+      botRespondingRef.current = false;
+      queueMicrotask(() => {
+        tryEndAsrRef.current?.();
+      });
+    }
+
     setMessages((previous) => {
       const last = previous[previous.length - 1];
 
       if (last && last.role === "bot" && !last.isFinal) {
+        // Ignore out-of-order partials that would roll back streamed text.
+        if (!event.isFinal && event.text.length < last.text.length) {
+          return previous;
+        }
         return [
           ...previous.slice(0, -1),
           { ...last, text: event.text, isFinal: event.isFinal, timestamp: event.timestamp },
+        ];
+      }
+
+      if (last && last.role === "bot" && last.isFinal && !event.isFinal) {
+        return [
+          ...previous,
+          {
+            id: crypto.randomUUID(),
+            role: "bot" as const,
+            text: event.text,
+            isFinal: event.isFinal,
+            timestamp: event.timestamp,
+          },
         ];
       }
 
@@ -279,9 +461,16 @@ export function useVoiceSession(): UseVoiceSessionResult {
 
     try {
       ensureTtsPlayer();
+      ttsPlayerRef.current?.reset();
 
-      const adapter = new DoubaoVoiceAdapter();
+      const resolved = await resolveVoiceConfig(options);
+      ttsPlayerRef.current?.setTuning(TTS_TUNING[resolved.backend]);
+      setActiveBackend(resolved.backend);
+      const adapter = createVoiceAdapter(resolved.backend);
       adapterRef.current = adapter;
+
+      // Use the app-level session id so usage logs, reports, and admin session list stay aligned.
+      const adapterSessionId = options?.sessionId ?? crypto.randomUUID();
 
       adapter.on("transcript", (payload) => {
         onTranscript(payload as TranscriptEvent);
@@ -296,7 +485,11 @@ export function useVoiceSession(): UseVoiceSessionResult {
       });
 
       adapter.on("realtime-hint", (payload) => {
-        showHint((payload as { message: string }).message);
+        const hintMessage = (payload as { message: string }).message;
+        showHint(hintMessage);
+        if (hintMessage.includes("没识别到")) {
+          clearListeningDraft();
+        }
       });
 
       adapter.on("error", (payload) => {
@@ -311,13 +504,14 @@ export function useVoiceSession(): UseVoiceSessionResult {
       });
 
       await adapter.connect({
-        sessionId: options?.sessionId ?? crypto.randomUUID(),
+        sessionId: adapterSessionId,
         token: "",
         userId: options?.userId ?? undefined,
         guestId: options?.guestId ?? undefined,
         voiceType: options?.voiceType,
         speedRatio: options?.speedRatio,
         systemPrompt: options?.systemPrompt,
+        modelOverrides: resolved.modelOverrides,
       });
 
       if (!skipMic) {
@@ -343,6 +537,37 @@ export function useVoiceSession(): UseVoiceSessionResult {
 
         const processor = audioContext.createScriptProcessor(4096, 1, 1);
         processorNodeRef.current = processor;
+
+        const tryEndAsr = () => {
+          if (statusRef.current !== "active" || !adapterRef.current) {
+            return;
+          }
+          // Block only while waiting for bot reply and user has not started a new utterance.
+          // Do NOT block on ttsPlayer.isActive() — that prevented barge-in and delayed ASR for seconds.
+          if (botRespondingRef.current && !hasVoiceSinceEndAsrRef.current) {
+            return;
+          }
+          if (
+            !hasVoiceSinceEndAsrRef.current ||
+            endAsrSentForSilenceRef.current ||
+            inSpeechRef.current
+          ) {
+            return;
+          }
+
+          const now = performance.now();
+          const silenceDuration = now - lastVoiceAtRef.current;
+          const speechDuration = lastVoiceAtRef.current - firstVoiceAtRef.current;
+
+          if (silenceDuration >= SILENCE_END_ASR_MS && speechDuration >= MIN_SPEECH_MS) {
+            botRespondingRef.current = true;
+            adapterRef.current.endAsr("silence");
+            endAsrSentForSilenceRef.current = true;
+            hasVoiceSinceEndAsrRef.current = false;
+          }
+        };
+        tryEndAsrRef.current = tryEndAsr;
+
         processor.onaudioprocess = (audioEvent) => {
           if (statusRef.current !== "active" || !adapterRef.current) {
             return;
@@ -355,24 +580,65 @@ export function useVoiceSession(): UseVoiceSessionResult {
           }
           const rms = Math.sqrt(sumSquares / input.length);
           const now = performance.now();
+          const wasInSpeech = inSpeechRef.current;
           const isVoiceActive = rms > SILENCE_RMS_THRESHOLD;
 
-          if (!isVoiceActive) {
-            const silenceDuration = now - lastVoiceAtRef.current;
-            if (
-              hasVoiceSinceEndAsrRef.current &&
-              !endAsrSentForSilenceRef.current &&
-              silenceDuration >= SILENCE_END_ASR_MS
-            ) {
-              adapterRef.current.endAsr("silence");
-              endAsrSentForSilenceRef.current = true;
-              hasVoiceSinceEndAsrRef.current = false;
+          // While bot audio is playing/buffered, ignore echo-level input entirely; only louder,
+          // sustained voice counts as barge-in. Held frames are forwarded on confirmation so the
+          // start of a real interruption is not lost to the ASR.
+          if (ttsPlayerRef.current?.isActive()) {
+            if (rms > BARGE_IN_RMS_THRESHOLD) {
+              const held = downsampleTo16k(input, audioEvent.inputBuffer.sampleRate);
+              bargeInHeldChunksRef.current.push(
+                held.buffer.slice(held.byteOffset, held.byteOffset + held.byteLength) as ArrayBuffer,
+              );
+              bargeInVoicedFramesRef.current += 1;
+              if (bargeInVoicedFramesRef.current < BARGE_IN_MIN_FRAMES) {
+                return;
+              }
+              ttsPlayerRef.current.reset();
+              bargeInHeldChunksRef.current.pop();
+              for (const heldChunk of bargeInHeldChunksRef.current) {
+                adapterRef.current.sendAudio(heldChunk);
+              }
+            } else {
+              bargeInVoicedFramesRef.current = 0;
+              bargeInHeldChunksRef.current = [];
+              return;
             }
+          }
+          if (bargeInVoicedFramesRef.current > 0) {
+            bargeInVoicedFramesRef.current = 0;
+            bargeInHeldChunksRef.current = [];
+          }
+
+          if (!isVoiceActive) {
+            if (wasInSpeech && listeningDraftIdRef.current) {
+              const speechDuration = now - firstVoiceAtRef.current;
+              if (speechDuration < MIN_LISTENING_DRAFT_MS) {
+                clearListeningDraftRef.current();
+              }
+            }
+            inSpeechRef.current = false;
+            tryEndAsr();
             return;
           }
 
+          if (!wasInSpeech) {
+            firstVoiceAtRef.current = now;
+            botRespondingRef.current = false;
+            endAsrSentForSilenceRef.current = false;
+          }
+          inSpeechRef.current = true;
           lastVoiceAtRef.current = now;
           endAsrSentForSilenceRef.current = false;
+
+          if (
+            !listeningDraftIdRef.current &&
+            now - firstVoiceAtRef.current >= MIN_LISTENING_DRAFT_MS
+          ) {
+            ensureListeningDraftRef.current();
+          }
 
           const pcm = downsampleTo16k(input, audioEvent.inputBuffer.sampleRate);
           const chunk = pcm.buffer.slice(
@@ -392,8 +658,13 @@ export function useVoiceSession(): UseVoiceSessionResult {
         silent.connect(audioContext.destination);
 
         lastVoiceAtRef.current = performance.now();
+        firstVoiceAtRef.current = 0;
+        inSpeechRef.current = false;
         endAsrSentForSilenceRef.current = false;
         hasVoiceSinceEndAsrRef.current = false;
+        botRespondingRef.current = false;
+        bargeInVoicedFramesRef.current = 0;
+        bargeInHeldChunksRef.current = [];
       }
 
       statusRef.current = "active";
@@ -416,6 +687,7 @@ export function useVoiceSession(): UseVoiceSessionResult {
     playTtsChunk,
     showHint,
     teardownConnection,
+    clearListeningDraft,
   ]);
 
   const sendTextQuery = useCallback((text: string) => {
@@ -436,6 +708,7 @@ export function useVoiceSession(): UseVoiceSessionResult {
     ]);
 
     adapterRef.current.sendTextQuery(content);
+    botRespondingRef.current = true;
     ttsPlayerRef.current?.reset();
   }, []);
 
@@ -452,6 +725,7 @@ export function useVoiceSession(): UseVoiceSessionResult {
     hint,
     startedAt,
     conversationStartedAt,
+    activeBackend,
     start,
     sendTextQuery,
     stop,

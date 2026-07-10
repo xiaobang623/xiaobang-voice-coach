@@ -1,19 +1,29 @@
 import { useEffect, useState } from "react";
-import type { AdminSessionRow, Pagination } from "./types";
-import { defaultDateFrom, fetchAdminSessions, formatCurrency, formatDateTime, todayIsoDate } from "./api";
+import type { AdminSessionRow, AdminUser, Pagination } from "./types";
+import {
+  defaultDateFrom,
+  fetchAdminSessions,
+  formatDateTime,
+  formatSessionCostBreakdown,
+  formatVoiceBackendLabel,
+  todayIsoDate,
+} from "./api";
+import { VoiceConfigModal } from "./VoiceConfigModal";
 
 interface SessionListTableProps {
+  user: AdminUser;
   filterUserId: string;
   onFilterUserIdChange: (userId: string) => void;
 }
 
-export function SessionListTable({ filterUserId, onFilterUserIdChange }: SessionListTableProps) {
+export function SessionListTable({ user, filterUserId, onFilterUserIdChange }: SessionListTableProps) {
   const [rows, setRows] = useState<AdminSessionRow[]>([]);
   const [pagination, setPagination] = useState<Pagination>({ page: 1, limit: 20, total: 0 });
   const [dateFrom, setDateFrom] = useState(defaultDateFrom(7));
   const [dateTo, setDateTo] = useState(todayIsoDate());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [configTarget, setConfigTarget] = useState<AdminSessionRow | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -79,7 +89,7 @@ export function SessionListTable({ filterUserId, onFilterUserIdChange }: Session
               setPagination((prev) => ({ ...prev, page: 1 }));
               onFilterUserIdChange(event.target.value);
             }}
-            placeholder="用户 ID 过滤"
+            placeholder="用户 / 游客 ID 过滤"
             className="min-w-48 rounded-full border border-border bg-bg px-3 py-1.5 text-sm outline-none focus:border-accent"
           />
         </div>
@@ -94,20 +104,22 @@ export function SessionListTable({ filterUserId, onFilterUserIdChange }: Session
               <th className="px-2 py-2 font-medium">时间</th>
               <th className="px-2 py-2 font-medium">用户</th>
               <th className="px-2 py-2 font-medium">话题</th>
+              <th className="px-2 py-2 font-medium">语音</th>
               <th className="px-2 py-2 font-medium">摘要</th>
               <th className="px-2 py-2 font-medium">成本</th>
+              <th className="px-2 py-2 font-medium">操作</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={5} className="px-2 py-6 text-center text-text-muted">
+                <td colSpan={7} className="px-2 py-6 text-center text-text-muted">
                   加载中…
                 </td>
               </tr>
             ) : rows.length === 0 ? (
               <tr>
-                <td colSpan={5} className="px-2 py-6 text-center text-text-muted">
+                <td colSpan={7} className="px-2 py-6 text-center text-text-muted">
                   暂无对话
                 </td>
               </tr>
@@ -117,10 +129,24 @@ export function SessionListTable({ filterUserId, onFilterUserIdChange }: Session
                   <td className="px-2 py-2 whitespace-nowrap">{formatDateTime(row.created_at)}</td>
                   <td className="px-2 py-2">{row.user_nickname}</td>
                   <td className="px-2 py-2">{row.topic ?? "自由聊"}</td>
-                  <td className="max-w-xs truncate px-2 py-2 text-text-secondary">
-                    {row.transcript_preview || "—"}
+                  <td className="px-2 py-2 whitespace-nowrap text-text-secondary">
+                    {formatVoiceBackendLabel(row.voice_backend)}
                   </td>
-                  <td className="px-2 py-2">{formatCurrency(row.total_cost)}</td>
+                  <td className="max-w-xs truncate px-2 py-2 text-text-secondary">
+                    {row.transcript_preview || (row.is_archived === false ? "（未存档，仅有用量）" : "—")}
+                  </td>
+                  <td className="px-2 py-2 whitespace-nowrap" title={formatSessionCostBreakdown(row.cost_by_provider, row.total_cost)}>
+                    {formatSessionCostBreakdown(row.cost_by_provider, row.total_cost)}
+                  </td>
+                  <td className="px-2 py-2">
+                    <button
+                      type="button"
+                      onClick={() => setConfigTarget(row)}
+                      className="text-xs text-accent hover:underline"
+                    >
+                      会话配置
+                    </button>
+                  </td>
                 </tr>
               ))
             )}
@@ -149,6 +175,18 @@ export function SessionListTable({ filterUserId, onFilterUserIdChange }: Session
           下一页
         </button>
       </div>
+
+      {configTarget ? (
+        <VoiceConfigModal
+          user={user}
+          scopeType="session"
+          sessionId={configTarget.id}
+          userId={configTarget.user_id ?? undefined}
+          guestId={configTarget.guest_id ?? undefined}
+          title={`会话语音配置 · ${formatDateTime(configTarget.created_at)}`}
+          onClose={() => setConfigTarget(null)}
+        />
+      ) : null}
     </section>
   );
 }

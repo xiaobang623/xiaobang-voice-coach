@@ -1,3 +1,5 @@
+export type PracticeMode = "chat" | "task";
+
 export interface TopicOption {
   id: string;
   title: string;
@@ -9,6 +11,34 @@ export interface TopicOption {
    * actually sticks to the chosen topic. "" / undefined = free talk.
    */
   promptSeed?: string;
+  /** Defaults to "chat" for backward compatibility. */
+  mode?: PracticeMode;
+}
+
+export interface TaskGoal {
+  id: string;
+  /** Display text for the user (Chinese). */
+  desc: string;
+  /** English hint injected into the Coach system_role. */
+  coachHint: string;
+}
+
+export interface TaskScenario extends TopicOption {
+  mode: "task";
+  category: "life" | "work";
+  /** Who the Coach plays and the scene setup. */
+  roleSetup: string;
+  /** Hand-written goals; empty array means LLM generates on entry (future). */
+  goals: TaskGoal[];
+}
+
+export type TaskGoalStatus = "done" | "partial" | "missed";
+
+export interface TaskResult {
+  goalId: string;
+  status: TaskGoalStatus;
+  /** One-sentence reason in Chinese. */
+  reason: string;
 }
 
 /** A selectable TTS voice. `id` is the Doubao `voice_type` sent upstream. */
@@ -70,6 +100,10 @@ export interface ReportJSON {
   durationSeconds: number;
   userLevel: UserLevel;
   corrections: Correction[];
+  /** Present only for task-mode sessions. */
+  taskResults?: TaskResult[];
+  /** e.g. "2/3" — count of done goals over total. */
+  taskScore?: string;
 }
 
 /** Compact learner profile stored in memory.summary. */

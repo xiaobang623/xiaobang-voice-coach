@@ -1,5 +1,6 @@
 import { requireAdmin } from "../_lib/admin-auth.js";
 import { getAdminSupabase } from "../_lib/admin-supabase.js";
+import { buildCostByProvider } from "../_lib/cost-providers.js";
 import { setJsonCors, json } from "../_lib/http.js";
 
 function todayBounds() {
@@ -53,10 +54,10 @@ export default async function handler(req, res) {
         .select("id", { count: "exact", head: true })
         .gte("created_at", start)
         .lte("created_at", end),
-      supabase.from("token_logs").select("cost"),
+      supabase.from("token_logs").select("api_provider, cost"),
       supabase
         .from("token_logs")
-        .select("cost")
+        .select("api_provider, cost")
         .gte("created_at", start)
         .lte("created_at", end),
       supabase.from("token_logs").select("guest_id").not("guest_id", "is", null),
@@ -67,6 +68,9 @@ export default async function handler(req, res) {
     const sumCost = (rows) =>
       Number((rows ?? []).reduce((sum, row) => sum + Number(row.cost ?? 0), 0).toFixed(2));
 
+    const costByProvider = buildCostByProvider(allCosts);
+    const costTodayByProvider = buildCostByProvider(todayCosts);
+
     json(res, 200, {
       success: true,
       data: {
@@ -74,9 +78,11 @@ export default async function handler(req, res) {
         total_guests: totalGuests,
         total_sessions: totalSessions ?? 0,
         total_cost: sumCost(allCosts),
+        cost_by_provider: costByProvider,
         new_users_today: newUsersToday ?? 0,
         sessions_today: sessionsToday ?? 0,
         cost_today: sumCost(todayCosts),
+        cost_today_by_provider: costTodayByProvider,
       },
     });
   } catch (error) {

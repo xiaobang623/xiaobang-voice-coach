@@ -28,6 +28,7 @@ interface RawReport {
 interface GenerateReportInput {
   sessionId: string;
   durationSeconds: number;
+  taskGoals?: Array<{ id: string; desc: string }>;
 }
 
 export interface ProcessedReport {
@@ -44,6 +45,12 @@ export interface ProcessedReport {
     frequency: number;
     example?: string;
   }>;
+  taskResults?: Array<{
+    goalId: string;
+    status: "done" | "partial" | "missed";
+    reason: string;
+  }>;
+  taskScore?: string;
 }
 
 const SEVERITY_RANK: Record<CorrectionSeverity, number> = {
@@ -83,7 +90,13 @@ export const SYSTEM_PROMPT = `You are an English speaking coach. Analyze the con
     "explanation": "string",
     "severity": "minor" | "important" | "critical",
     "example": "string (optional)"
-  }]
+  }],
+  "taskResults": [{
+    "goalId": "string",
+    "status": "done" | "partial" | "missed",
+    "reason": "string (one concise sentence in Chinese)"
+  }],
+  "taskScore": "string (e.g. \\"2/3\\" — count of done goals over total)"
 }
 
 Analysis dimensions (use the type field):
@@ -99,7 +112,14 @@ Rules:
 - Return at most 10 corrections; backend will trim to top 6.
 - Assign severity: critical = blocks understanding, important = clear error, minor = polish.
 - Skip filler words and trivial typos. Write explanation in concise Chinese.
-- If transcript is too short, return userLevel plus empty corrections array.`;
+- If transcript is too short, return userLevel plus empty corrections array.
+
+Task judging (only when Task goals are provided in the user message):
+- For EACH listed goal, read the transcript objectively and assign status:
+  done = user clearly achieved the goal; partial = attempted but incomplete; missed = not attempted or failed.
+- Write reason in one concise Chinese sentence citing what the user did or didn't do.
+- taskScore = number of "done" goals / total goals (e.g. "2/3"). Count only "done", not "partial".
+- If no task goals are provided, omit taskResults and taskScore entirely.`;
 
 function normalizeType(raw: string | undefined): CorrectionType {
   const value = String(raw ?? "grammar").toLowerCase().trim();
@@ -135,6 +155,60 @@ function migrateLegacyFields(raw: RawReport): RawCorrection[] {
   }
 
   return corrections;
+}
+
+type TaskGoalStatus = "done" | "partial" | "missed";
+
+function normalizeTaskStatus(raw: string | undefined): TaskGoalStatus {
+  const value = String(raw ?? "missed").toLowerCase().trim();
+  return value === "done" || value === "partial" ? value : "missed";
+}
+
+function normalizeTaskResults(
+  raw: RawReport & {
+    taskResults?: Array<{ goalId?: string; status?: string; reason?: string }>;
+    taskScore?: string;
+  },
+  input: GenerateReportInput,
+): Pick<ProcessedReport, "taskResults" | "taskScore"> | Record<string, never> {
+  const goals = Array.isArray(input.taskGoals) ? input.taskGoals : [];
+  if (goals.length === 0) {
+    return {};
+  }
+
+  const rawResults = Array.isArray(raw.taskResults) ? raw.taskResults : [];
+  const byGoalId = new Map(
+    rawResults
+      .filter((entry) => entry?.goalId)
+      .map((entry) => [
+        String(entry.goalId),
+        {
+          goalId: String(entry.goalId),
+          status: normalizeTaskStatus(entry.status),
+          reason: String(entry.reason ?? "").trim() || "未能从对话中判断",
+        },
+      ]),
+  );
+
+  const taskResults = goals.map((goal) => {
+    const existing = byGoalId.get(goal.id);
+    if (existing) {
+      return existing;
+    }
+    return {
+      goalId: goal.id,
+      status: "missed" as const,
+      reason: "对话中未涉及此目标",
+    };
+  });
+
+  const doneCount = taskResults.filter((item) => item.status === "done").length;
+  const taskScore =
+    typeof raw.taskScore === "string" && raw.taskScore.includes("/")
+      ? raw.taskScore
+      : `${doneCount}/${goals.length}`;
+
+  return { taskResults, taskScore };
 }
 
 export function postProcessReport(raw: RawReport, input: GenerateReportInput): ProcessedReport {
@@ -188,11 +262,14 @@ export function postProcessReport(raw: RawReport, input: GenerateReportInput): P
     return b.frequency - a.frequency;
   });
 
+  const taskFields = normalizeTaskResults(raw, input);
+
   return {
     sessionId: input.sessionId,
     createdAt: typeof raw.createdAt === "string" ? raw.createdAt : new Date().toISOString(),
     durationSeconds: input.durationSeconds,
     userLevel: normalizeUserLevel(raw.userLevel),
     corrections: sorted.slice(0, MAX_CORRECTIONS),
+    ...taskFields,
   };
 }

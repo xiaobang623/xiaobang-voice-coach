@@ -3,6 +3,7 @@ import { AdminLayout } from "./AdminLayout";
 import { DashboardSummaryCards } from "./DashboardSummary";
 import { UserListTable } from "./UserListTable";
 import { SessionListTable } from "./SessionListTable";
+import { VoiceConfigSection } from "./VoiceConfigSection";
 import { TokenSummarySection } from "./TokenSummarySection";
 import { fetchAdminMe, fetchDashboardSummary, logoutAdmin } from "./api";
 import type { AdminUser, DashboardSummary } from "./types";
@@ -15,6 +16,7 @@ export function AdminDashboardPage({ onLogout }: AdminDashboardPageProps) {
   const [user, setUser] = useState<AdminUser | null>(null);
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(true);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
   const [filterUserId, setFilterUserId] = useState("");
 
   useEffect(() => {
@@ -41,6 +43,7 @@ export function AdminDashboardPage({ onLogout }: AdminDashboardPageProps) {
   useEffect(() => {
     let cancelled = false;
     setSummaryLoading(true);
+    setSummaryError(null);
 
     void (async () => {
       try {
@@ -48,9 +51,10 @@ export function AdminDashboardPage({ onLogout }: AdminDashboardPageProps) {
         if (!cancelled) {
           setSummary(data);
         }
-      } catch {
+      } catch (err) {
         if (!cancelled) {
           setSummary(null);
+          setSummaryError(err instanceof Error ? err.message : "加载失败");
         }
       } finally {
         if (!cancelled) {
@@ -84,9 +88,10 @@ export function AdminDashboardPage({ onLogout }: AdminDashboardPageProps) {
 
   return (
     <AdminLayout user={user} onLogout={handleLogout}>
-      <DashboardSummaryCards data={summary} loading={summaryLoading} />
-      <UserListTable onSelectUser={setFilterUserId} />
-      <SessionListTable filterUserId={filterUserId} onFilterUserIdChange={setFilterUserId} />
+      <DashboardSummaryCards data={summary} loading={summaryLoading} error={summaryError} />
+      <VoiceConfigSection user={user} />
+      <UserListTable user={user} onSelectUser={setFilterUserId} />
+      <SessionListTable user={user} filterUserId={filterUserId} onFilterUserIdChange={setFilterUserId} />
       <TokenSummarySection />
     </AdminLayout>
   );

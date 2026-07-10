@@ -1,9 +1,10 @@
 import type { DashboardSummary } from "./types";
-import { formatCurrency } from "./api";
+import { formatCostProviderBreakdown, formatCurrency } from "./api";
 
 interface DashboardSummaryProps {
   data: DashboardSummary | null;
   loading: boolean;
+  error?: string | null;
 }
 
 function StatCard({ label, value, sub }: { label: string; value: string; sub: string }) {
@@ -16,7 +17,7 @@ function StatCard({ label, value, sub }: { label: string; value: string; sub: st
   );
 }
 
-export function DashboardSummaryCards({ data, loading }: DashboardSummaryProps) {
+export function DashboardSummaryCards({ data, loading, error }: DashboardSummaryProps) {
   if (loading) {
     return (
       <section className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
@@ -27,9 +28,22 @@ export function DashboardSummaryCards({ data, loading }: DashboardSummaryProps) 
     );
   }
 
+  if (error) {
+    return (
+      <section className="rounded-2xl border border-error/30 bg-error/5 p-5">
+        <h2 className="text-base font-medium text-text">今日数据</h2>
+        <p className="mt-2 text-sm text-error">加载失败：{error}</p>
+      </section>
+    );
+  }
+
   if (!data) {
     return null;
   }
+
+  const costTodayBreakdown = formatCostProviderBreakdown(
+    data.cost_today_by_provider ?? data.cost_by_provider,
+  );
 
   return (
     <section>
@@ -53,7 +67,7 @@ export function DashboardSummaryCards({ data, loading }: DashboardSummaryProps) 
         <StatCard
           label="成本"
           value={formatCurrency(data.total_cost)}
-          sub={`今日成本 ${formatCurrency(data.cost_today)}`}
+          sub={`今日 ${formatCurrency(data.cost_today)} · ${costTodayBreakdown}`}
         />
       </div>
     </section>

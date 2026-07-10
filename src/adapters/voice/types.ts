@@ -1,3 +1,13 @@
+export interface VoiceModelOverrides {
+  doubaoDialogModel?: string;
+  asrProvider?: string;
+  ttsProvider?: string;
+  siliconflowTtsVoice?: string;
+  whisperModel?: string;
+  deepseekModel?: string;
+  cosyvoiceModelKey?: string;
+}
+
 export interface VoiceConfig {
   sessionId: string;
   token: string;
@@ -10,6 +20,8 @@ export interface VoiceConfig {
   speedRatio?: number;
   /** Full system_role for the Coach (topic-aware opening). */
   systemPrompt?: string;
+  /** Admin-resolved model overrides for the active voice backend. */
+  modelOverrides?: VoiceModelOverrides;
 }
 
 export interface TranscriptEvent {
@@ -33,6 +45,7 @@ export interface VoiceAdapter {
   connect(config: VoiceConfig): Promise<void>;
   disconnect(): void;
   sendAudio(chunk: ArrayBuffer): void;
+  endAsr(source?: "silence" | "stop"): void;
   /** Send a text query (ChatTextQuery / event 501) to trigger a spoken reply. */
   sendTextQuery(text: string): void;
   /** Read aloud via SayHello (event 300) when text query is unavailable. */

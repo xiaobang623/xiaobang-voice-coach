@@ -1,0 +1,24 @@
+# CosyVoice TTS 服务依赖
+#
+# CosyVoice 官方仓库依赖版本较挑剔，强烈建议优先用官方 requirements.txt 装一遍环境：
+#   git clone --recursive https://github.com/FunAudioLLM/CosyVoice.git
+#   cd CosyVoice && pip install -r requirements.txt
+#
+# 下面只补充官方仓库里没有、但本地 HTTP 服务需要的部分。
+
+# HTTP 服务
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.9   # FastAPI 文件上传（zero_shot/instruct 模式的参考音频）必须
+
+# 模型下载（用 modelscope 拉取 CosyVoice2-0.5B 等预训练模型）
+modelscope>=1.15.0
+
+# 音频处理（官方仓库通常已包含，这里列出以防漏装）
+torch>=2.0.0
+torchaudio>=2.0.0
+soundfile>=0.12.1
+
+# 系统级依赖（不是 pip 包，需要额外安装）:
+#   macOS:  brew install ffmpeg sox
+#   Ubuntu: sudo apt install ffmpeg sox libsox-dev

@@ -31,7 +31,7 @@ export default async function handler(req, res) {
       return;
     }
 
-    if (apiProvider !== "deepseek" && apiProvider !== "doubao") {
+    if (apiProvider !== "deepseek" && apiProvider !== "doubao" && apiProvider !== "siliconflow") {
       json(res, 400, { success: false, error: "Unsupported apiProvider" });
       return;
     }
@@ -58,6 +58,11 @@ export default async function handler(req, res) {
         success: false,
         error: "tokensUsed or durationSeconds is required for doubao",
       });
+      return;
+    }
+
+    if (apiProvider === "siliconflow" && (!Number.isFinite(tokensUsed) || tokensUsed <= 0)) {
+      json(res, 400, { success: false, error: "tokensUsed (characters) is required for siliconflow" });
       return;
     }
 

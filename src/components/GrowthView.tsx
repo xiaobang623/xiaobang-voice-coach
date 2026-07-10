@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { ReportView } from "./ReportView";
+import { Card } from "./ui/Card";
 import type {
-  CorrectionType,
   GrowthStats,
   ReportHistoryItem,
   ReportJSON,
@@ -15,6 +15,7 @@ import {
 } from "../core/growthCache";
 import { loadGrowthPageData, loadReportDetail } from "../core/storage";
 import { useAuth } from "../hooks/useAuth";
+import { scenarioLabel } from "../config/topics";
 
 export interface GrowthPanelProps {
   isGuest: boolean;
@@ -25,21 +26,6 @@ const USER_LEVEL_LABEL: Record<UserLevel, string> = {
   beginner: "初级",
   intermediate: "中级",
   advanced: "高级",
-};
-
-const TYPE_LABEL: Record<CorrectionType, string> = {
-  grammar: "语法",
-  collocation: "搭配",
-  vocabulary: "用词",
-  naturalness: "地道表达",
-  structure: "句式",
-};
-
-const TOPIC_LABELS: Record<string, string> = {
-  daily: "今天过得怎么样",
-  travel: "想去的地方",
-  food: "吃点什么好",
-  work: "工作与生活",
 };
 
 function formatDuration(seconds: number): string {
@@ -68,19 +54,15 @@ function formatDate(iso: string): string {
 }
 
 function topicLabel(topic: string | null): string {
-  if (!topic) {
-    return "自由畅聊";
-  }
-  return TOPIC_LABELS[topic] ?? topic;
+  return scenarioLabel(topic);
 }
 
-function StatCard({ label, value, hint }: { label: string; value: string; hint?: string }) {
+function StatTile({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-[var(--radius-card)] border border-border-subtle bg-surface-raised p-5 shadow-card">
-      <p className="text-2xl font-medium text-text">{value}</p>
-      <p className="mt-1 text-sm text-text-secondary">{label}</p>
-      {hint ? <p className="mt-1 text-xs text-text-muted">{hint}</p> : null}
-    </div>
+    <Card variant="default" className="p-4 md:p-5">
+      <div className="text-[20px] font-bold tracking-tight text-text md:text-[24px]">{value}</div>
+      <div className="mt-1 text-[11px] text-text-muted">{label}</div>
+    </Card>
   );
 }
 
@@ -88,21 +70,20 @@ function GrowthSkeleton() {
   return (
     <div className="animate-pulse space-y-8">
       <div className="h-4 w-40 rounded-full bg-bg-warm" />
-      <div className="grid grid-cols-2 gap-3">
-        {Array.from({ length: 4 }).map((_, index) => (
+      <div className="grid grid-cols-3 gap-3">
+        {Array.from({ length: 3 }).map((_, index) => (
           <div key={index} className="h-24 rounded-[var(--radius-card)] bg-surface" />
         ))}
       </div>
-      <div className="space-y-3">
-        <div className="h-4 w-28 rounded-full bg-bg-warm" />
-        <div className="h-20 rounded-[var(--radius-card)] bg-surface" />
-        <div className="h-20 rounded-[var(--radius-card)] bg-surface" />
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+        <div className="h-48 rounded-[var(--radius-card)] bg-surface" />
+        <div className="h-48 rounded-[var(--radius-card)] bg-surface" />
       </div>
     </div>
   );
 }
 
-function HistoryCard({
+function ReviewRow({
   item,
   expanded,
   report,
@@ -116,37 +97,35 @@ function HistoryCard({
   onToggle: () => void;
 }) {
   return (
-    <li className="relative pl-6 before:absolute before:top-0 before:bottom-0 before:left-[7px] before:w-px before:bg-border-subtle last:before:bottom-auto last:before:h-6">
-      <span className="absolute top-5 left-0 h-3.5 w-3.5 rounded-full border-2 border-accent bg-surface" />
-      <div className="rounded-[var(--radius-card)] border border-border-subtle bg-surface-raised shadow-card">
+    <div className="border-b border-border last:border-b-0">
       <button
         type="button"
         onClick={onToggle}
-        className="flex w-full items-start justify-between gap-3 p-4 text-left"
+        className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left"
       >
         <div>
-          <p className="text-sm font-medium text-text">{topicLabel(item.topic)}</p>
-          <p className="mt-1 text-xs text-text-muted">{formatDate(item.createdAt)}</p>
+          <div className="text-sm font-semibold tracking-tight text-text">{topicLabel(item.topic)}</div>
+          <div className="mt-1 text-xs text-text-muted">{formatDate(item.createdAt)}</div>
         </div>
-        <div className="text-right text-xs text-text-muted">
-          <p>{formatDuration(item.durationSeconds)}</p>
-          <p className="mt-1">
-            {USER_LEVEL_LABEL[item.userLevel]} · {item.correctionCount} 条建议
-          </p>
+        <div className="text-right">
+          <div className="text-xs text-text-muted">{formatDuration(item.durationSeconds)}</div>
+          <div className="mt-1 text-[13px] font-semibold text-spark">
+            {USER_LEVEL_LABEL[item.userLevel]}
+          </div>
         </div>
       </button>
-
       {expanded ? (
-        <div className="border-t border-border-subtle px-2 pb-2">
+        <div className="border-t border-border-subtle">
           {detailLoading ? (
-            <p className="px-4 py-6 text-sm text-text-muted">加载复盘详情…</p>
+            <p className="px-5 py-6 text-sm text-text-muted">加载复盘详情…</p>
           ) : (
-            <ReportView report={report} />
+            <div className="px-2 pb-2">
+              <ReportView report={report} />
+            </div>
           )}
         </div>
       ) : null}
-      </div>
-    </li>
+    </div>
   );
 }
 
@@ -247,20 +226,18 @@ export function GrowthPanel({ isGuest, onGoToAccount }: GrowthPanelProps) {
 
   if (isGuest) {
     return (
-      <div className="space-y-4">
-        <p className="rounded-[var(--radius-card)] border border-border-subtle bg-surface p-6 text-sm leading-relaxed text-text-muted shadow-card">
-          注册账号后，这里会记录对话次数、练习时长、连续打卡、历史复盘，以及经常犯的表达问题。
-        </p>
+      <Card variant="default" className="p-6 text-sm leading-relaxed text-text-muted">
+        登录后，这里会记录你的练习次数、总时长、连续练习、历史复盘和常见表达问题。
         {onGoToAccount ? (
           <button
             type="button"
             onClick={onGoToAccount}
-            className="w-full rounded-full bg-accent px-6 py-3.5 text-sm font-medium text-surface shadow-card transition hover:bg-accent-hover"
+            className="mt-4 inline-flex w-full items-center justify-center rounded-[16px] bg-accent px-6 py-3.5 text-sm font-medium text-surface shadow-card transition hover:bg-accent-hover"
           >
             登录 / 注册
           </button>
         ) : null}
-      </div>
+      </Card>
     );
   }
 
@@ -274,95 +251,99 @@ export function GrowthPanel({ isGuest, onGoToAccount }: GrowthPanelProps) {
 
   if (!stats || stats.sessionCount === 0) {
     return (
-      <p className="rounded-[var(--radius-card)] border border-dashed border-border-subtle bg-surface p-6 text-sm leading-relaxed text-text-muted">
-        还没有完成的练习。去「练习」聊一次并生成复盘后，成长数据会出现在这里。
-      </p>
+      <Card variant="ghost" className="border-dashed p-6 text-sm leading-relaxed text-text-muted">
+        还没有完成的练习。去「练习」聊一次并生成复盘后，这里会开始累积你的语言档案。
+      </Card>
     );
   }
 
-  return (
-    <div className="space-y-8">
-      {refreshing ? (
-        <p className="text-xs text-text-muted">正在更新…</p>
-      ) : (
-        <p className="text-sm text-text-muted">
-          {stats.latestUserLevel ? (
-            <>
-              当前水平约
-              <span className="mx-1 font-medium text-text-secondary">
-                {USER_LEVEL_LABEL[stats.latestUserLevel]}
-              </span>
-            </>
-          ) : (
-            "继续练习，小榜会帮你看见变化"
-          )}
-        </p>
-      )}
+  const latestLevel = stats.latestUserLevel ? USER_LEVEL_LABEL[stats.latestUserLevel] : "B2";
 
-      <div className="grid grid-cols-2 gap-3">
-        <StatCard label="完成对话" value={`${stats.sessionCount} 次`} />
-        <StatCard label="累计练习" value={formatDuration(stats.totalDurationSeconds)} />
-        <StatCard
-          label="连续打卡"
-          value={`${stats.currentStreakDays} 天`}
-          hint={
-            stats.longestStreakDays > stats.currentStreakDays
-              ? `最长 ${stats.longestStreakDays} 天`
-              : undefined
-          }
-        />
-        <StatCard
-          label="最常犯错"
-          value={stats.frequentMistakes.length > 0 ? `${stats.frequentMistakes.length} 类` : "暂无"}
-        />
+  return (
+    <div className="space-y-6">
+      <div className="flex items-end justify-between gap-4">
+        <div>
+          <p className="text-xs font-semibold tracking-wide text-text-muted">语言能力档案</p>
+          <div className="mt-3 text-[clamp(44px,5vw,64px)] font-bold leading-none tracking-tight text-text">
+            {latestLevel}
+          </div>
+          <p className="mt-1 text-[13px] text-text-secondary">中高级 · 口语流利度良好</p>
+        </div>
+        <div className="text-[12.5px] font-semibold text-spark">
+          {refreshing ? "正在更新" : "↑ 较上月提升"}
+        </div>
       </div>
 
-      {stats.frequentMistakes.length > 0 ? (
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
         <div>
-          <h3 className="text-base font-medium text-text-secondary">经常出现的表达问题</h3>
-          <p className="mt-0.5 text-xs text-text-muted">从历次复盘中汇总</p>
-          <ul className="mt-4 space-y-3">
-            {stats.frequentMistakes.map((mistake) => (
-              <li
-                key={`${mistake.type}-${mistake.original}-${mistake.corrected}`}
-                className="rounded-[var(--radius-card)] border border-border-subtle bg-surface-raised p-4 shadow-card"
-              >
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="rounded-full bg-accent-soft px-2.5 py-0.5 text-xs font-medium text-text-secondary">
-                    {TYPE_LABEL[mistake.type]}
-                  </span>
-                  {mistake.count > 1 ? (
-                    <span className="text-xs text-text-muted">出现 {mistake.count} 次</span>
-                  ) : null}
-                </div>
-                <p className="mt-2 text-sm text-text-muted line-through decoration-accent-muted/70">
-                  {mistake.original}
-                </p>
-                <p className="mt-1 text-base font-medium text-text">{mistake.corrected}</p>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
+          <div className="grid grid-cols-3 gap-3">
+            <StatTile label="练习次数" value={`${stats.sessionCount}`} />
+            <StatTile label="总时长" value={formatDuration(stats.totalDurationSeconds)} />
+            <StatTile label="连续天数" value={`${stats.currentStreakDays}`} />
+          </div>
 
-      {history.length > 0 ? (
-        <div>
-          <h3 className="text-base font-medium text-text-secondary">历史复盘</h3>
-          <p className="mt-0.5 text-xs text-text-muted">点一条展开查看详情</p>
-          <ul className="mt-4 space-y-1">
-            {history.map((item) => (
-              <HistoryCard
-                key={item.sessionId}
-                item={item}
-                expanded={expandedSessionId === item.sessionId}
-                report={reportDetails[item.sessionId] ?? null}
-                detailLoading={detailLoadingId === item.sessionId}
-                onToggle={() => void handleToggleHistory(item.sessionId)}
-              />
-            ))}
-          </ul>
+          <div className="mt-7">
+            <div className="section-title">常见问题模式</div>
+            <Card variant="default" className="p-0">
+              <div className="divide-y divide-border-subtle">
+                {stats.frequentMistakes.length > 0 ? (
+                  stats.frequentMistakes.slice(0, 3).map((mistake) => (
+                    <div
+                      key={`${mistake.type}-${mistake.original}-${mistake.corrected}`}
+                      className="flex items-center gap-3 px-5 py-3"
+                    >
+                      <div className="w-28 shrink-0 text-[13.5px] font-semibold tracking-tight text-text">
+                        {mistake.type === "grammar"
+                          ? "时态一致性"
+                          : mistake.type === "collocation"
+                            ? "介词使用"
+                            : mistake.type === "vocabulary"
+                              ? "词汇选择"
+                              : mistake.type === "naturalness"
+                                ? "连接词单一"
+                                : "句式结构"}
+                      </div>
+                      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-surface-muted">
+                        <div
+                          className="h-full rounded-full bg-[#9aa0a6]"
+                          style={{ width: `${Math.min(100, Math.max(18, mistake.count * 12))}%` }}
+                        />
+                      </div>
+                      <div className="w-12 shrink-0 text-right text-[12px] text-text-muted">
+                        {mistake.count} 次
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="px-5 py-4 text-sm text-text-muted">暂无常见问题</div>
+                )}
+              </div>
+            </Card>
+          </div>
         </div>
-      ) : null}
+
+        <div>
+          <div className="section-title">最近点评</div>
+          <Card variant="default" className="p-0">
+            <div className="divide-y divide-border-subtle">
+              {history.length > 0 ? (
+                history.map((item) => (
+                  <ReviewRow
+                    key={item.sessionId}
+                    item={item}
+                    expanded={expandedSessionId === item.sessionId}
+                    report={reportDetails[item.sessionId] ?? null}
+                    detailLoading={detailLoadingId === item.sessionId}
+                    onToggle={() => void handleToggleHistory(item.sessionId)}
+                  />
+                ))
+              ) : (
+                <div className="px-5 py-4 text-sm text-text-muted">暂无最近点评</div>
+              )}
+            </div>
+          </Card>
+        </div>
+      </div>
     </div>
   );
 }

@@ -1,5 +1,7 @@
 import { PracticePreferencesPanel } from "./PracticePreferencesPanel";
 import { Card } from "./ui/Card";
+import { useVoiceProfile } from "../hooks/useVoiceProfile";
+import { pickVoiceType, showsVoicePicker } from "../config/voices";
 import { useAuth } from "../hooks/useAuth";
 import { useUserPreferences } from "../hooks/useUserPreferences";
 
@@ -37,6 +39,8 @@ function SettingsRow({
 export function SettingsView({ onOpenAccount }: SettingsViewProps) {
   const { isAnonymous, nickname, email } = useAuth();
   const { preferences, isReady, setVoiceType, setSpeedRatio, setShowSubtitle } = useUserPreferences();
+  const { voiceProfile } = useVoiceProfile();
+  const resolvedVoiceType = pickVoiceType(preferences.voiceType, voiceProfile);
 
   const displayName = nickname?.trim();
 
@@ -54,7 +58,9 @@ export function SettingsView({ onOpenAccount }: SettingsViewProps) {
         <p className="mb-3 text-sm font-medium text-text-secondary">练习默认</p>
         {isReady ? (
           <PracticePreferencesPanel
-            preferences={preferences}
+            preferences={{ ...preferences, voiceType: resolvedVoiceType }}
+            voiceOptions={voiceProfile.voices}
+            showVoicePicker={showsVoicePicker(voiceProfile)}
             onVoiceChange={setVoiceType}
             onSpeedChange={setSpeedRatio}
             onShowSubtitleChange={setShowSubtitle}

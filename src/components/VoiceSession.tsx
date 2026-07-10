@@ -1,15 +1,18 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import type { ReportJSON, SessionSettings } from "../types";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import type { ReportJSON, SessionSettings, TaskScenario, TopicOption, VoiceOption } from "../types";
 import type { UseVoiceSessionResult } from "../hooks/useVoiceSession";
-import { SPEED_OPTIONS, VOICE_OPTIONS } from "../config/session";
+import { SPEED_OPTIONS } from "../config/session";
 import { isTypingTestAvailable } from "../config/features";
 import { ReportView } from "./ReportView";
-import { TopicBridge } from "./TopicBridge";
+import { TaskCard } from "./TaskCard";
+import { TaskChecklist } from "./TaskChecklist";
+import { TopicBridge, CoachOpeningBubble } from "./TopicBridge";
 import { Button } from "./ui/Button";
 import { Card } from "./ui/Card";
-import { SlidersIcon } from "./ui/icons";
+import { KeyboardIcon, SlidersIcon, SpeakerIcon } from "./ui/icons";
+import { Mascot, type MascotExpression } from "./ui/Mascot";
 import { VoiceAvatar } from "./ui/VoiceAvatar";
-import type { TopicOption } from "../types";
 
 function formatElapsed(startedAt: number, now: number): string {
   const totalSeconds = Math.max(0, Math.floor((now - startedAt) / 1000));
@@ -101,86 +104,186 @@ function ChevronDownIcon({ className }: { className?: string }) {
   );
 }
 
+function UserListeningBubble() {
+  return (
+    <span className="flex h-5 items-center gap-1" aria-label="正在听">
+      {[0, 150, 300].map((delay) => (
+        <span
+          key={delay}
+          className="h-1.5 w-1.5 animate-bounce rounded-full bg-surface/90"
+          style={{ animationDelay: `${delay}ms` }}
+        />
+      ))}
+    </span>
+  );
+}
+
 interface VoicePickerProps {
   value: string;
+  options: VoiceOption[];
   disabled: boolean;
   onChange: (voiceType: string) => void;
 }
 
-function VoicePicker({ value, disabled, onChange }: VoicePickerProps) {
+interface VoiceMenuPosition {
+  left: number;
+  width: number;
+  top?: number;
+  bottom?: number;
+  maxHeight: number;
+}
+
+const VOICE_MENU_MIN_WIDTH = 208;
+const VOICE_MENU_GAP = 6;
+const VOICE_MENU_MAX_HEIGHT = 256;
+
+function VoicePicker({ value, options, disabled, onChange }: VoicePickerProps) {
   const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-  const selected = VOICE_OPTIONS.find((option) => option.id === value) ?? VOICE_OPTIONS[0];
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLUListElement>(null);
+  const [menuPosition, setMenuPosition] = useState<VoiceMenuPosition | null>(null);
+  const selected = options.find((option) => option.id === value) ?? options[0];
+
+  const updateMenuPosition = useCallback(() => {
+    const button = buttonRef.current;
+    if (!button) {
+      return;
+    }
+
+    const rect = button.getBoundingClientRect();
+    const width = Math.max(rect.width, VOICE_MENU_MIN_WIDTH);
+    const left = Math.min(rect.left, window.innerWidth - width - 8);
+    const spaceBelow = window.innerHeight - rect.bottom - VOICE_MENU_GAP;
+    const spaceAbove = rect.top - VOICE_MENU_GAP;
+    const openDown = spaceBelow >= 120 || spaceBelow >= spaceAbove;
+    const maxHeight = Math.min(
+      VOICE_MENU_MAX_HEIGHT,
+      Math.max(120, openDown ? spaceBelow : spaceAbove),
+    );
+
+    setMenuPosition(
+      openDown
+        ? { left, width, top: rect.bottom + VOICE_MENU_GAP, maxHeight }
+        : { left, width, bottom: window.innerHeight - rect.top + VOICE_MENU_GAP, maxHeight },
+    );
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!open) {
+      setMenuPosition(null);
+      return;
+    }
+    updateMenuPosition();
+    window.addEventListener("resize", updateMenuPosition);
+    window.addEventListener("scroll", updateMenuPosition, true);
+    return () => {
+      window.removeEventListener("resize", updateMenuPosition);
+      window.removeEventListener("scroll", updateMenuPosition, true);
+    };
+  }, [open, options.length, updateMenuPosition]);
 
   useEffect(() => {
     if (!open) {
       return;
     }
-    const handleClick = (event: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(event.target as Node)) {
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (buttonRef.current?.contains(target) || menuRef.current?.contains(target)) {
+        return;
+      }
+      setOpen(false);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
         setOpen(false);
       }
     };
-    document.addEventListener("click", handleClick);
-    return () => document.removeEventListener("click", handleClick);
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
   }, [open]);
 
-  return (
-    <div ref={rootRef} className="relative min-w-0 flex-1">
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={() => setOpen((current) => !current)}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-label="音色"
-        title={disabled ? "对话进行中暂不可改，请先暂停" : undefined}
-        className="flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-xs text-text-secondary transition hover:bg-bg-warm/50 disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        <VoiceAvatar voiceId={value} label={selected.label} />
-        <span className="min-w-0 flex-1 truncate font-medium">{selected.label}</span>
-        {selected.verified === false ? (
-          <span className="shrink-0 rounded-full bg-bg-warm px-1.5 py-0.5 text-[10px] text-text-muted">
-            未验证
-          </span>
-        ) : null}
-        <ChevronDownIcon
-          className={`h-3.5 w-3.5 shrink-0 text-text-muted transition ${open ? "rotate-180" : ""}`}
-        />
-      </button>
+  if (!selected || options.length === 0) {
+    return null;
+  }
 
-      {open && !disabled ? (
-        <ul
-          role="listbox"
+  const menu =
+    open && !disabled && menuPosition
+      ? createPortal(
+          <ul
+            ref={menuRef}
+            role="listbox"
+            aria-label="音色"
+            style={{
+              position: "fixed",
+              left: menuPosition.left,
+              width: menuPosition.width,
+              top: menuPosition.top,
+              bottom: menuPosition.bottom,
+              maxHeight: menuPosition.maxHeight,
+              zIndex: 1000,
+            }}
+            className="overflow-y-auto rounded-2xl border border-border-subtle bg-surface-raised py-1 shadow-elevated"
+          >
+            {options.map((option) => {
+              const active = option.id === value;
+              return (
+                <li key={option.id} role="option" aria-selected={active}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onChange(option.id);
+                      setOpen(false);
+                    }}
+                    className={`flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-xs transition ${
+                      active ? "bg-accent-soft/60 text-text" : "text-text-secondary hover:bg-surface"
+                    }`}
+                  >
+                    <VoiceAvatar voiceId={option.id} label={option.label} size="sm" />
+                    <span className="flex-1 font-medium">{option.label}</span>
+                    {option.verified === false ? (
+                      <span className="text-[10px] text-text-muted">未验证</span>
+                    ) : null}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>,
+          document.body,
+        )
+      : null;
+
+  return (
+    <>
+      <div className="relative min-w-0 flex-1">
+        <button
+          ref={buttonRef}
+          type="button"
+          disabled={disabled}
+          onClick={() => setOpen((current) => !current)}
+          aria-haspopup="listbox"
+          aria-expanded={open}
           aria-label="音色"
-          className="absolute top-[calc(100%+6px)] left-0 z-50 w-52 overflow-hidden rounded-2xl border border-border-subtle bg-surface-raised py-1 shadow-elevated"
+          title={disabled ? "对话进行中暂不可改，请先暂停" : undefined}
+          className="flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-xs text-text-secondary transition hover:bg-bg-warm/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {VOICE_OPTIONS.map((option) => {
-            const active = option.id === value;
-            return (
-              <li key={option.id} role="option" aria-selected={active}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    onChange(option.id);
-                    setOpen(false);
-                  }}
-                  className={`flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-xs transition ${
-                    active ? "bg-accent-soft/60 text-text" : "text-text-secondary hover:bg-surface"
-                  }`}
-                >
-                  <VoiceAvatar voiceId={option.id} label={option.label} size="sm" />
-                  <span className="flex-1 font-medium">{option.label}</span>
-                  {option.verified === false ? (
-                    <span className="text-[10px] text-text-muted">未验证</span>
-                  ) : null}
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      ) : null}
-    </div>
+          <VoiceAvatar voiceId={value} label={selected.label} />
+          <span className="min-w-0 flex-1 truncate font-medium">{selected.label}</span>
+          {selected.verified === false ? (
+            <span className="shrink-0 rounded-full bg-bg-warm px-1.5 py-0.5 text-[10px] text-text-muted">
+              未验证
+            </span>
+          ) : null}
+          <ChevronDownIcon
+            className={`h-3.5 w-3.5 shrink-0 text-text-muted transition ${open ? "rotate-180" : ""}`}
+          />
+        </button>
+      </div>
+      {menu}
+    </>
   );
 }
 
@@ -197,34 +300,13 @@ function SessionStatusDot({ status }: { status: "idle" | "connecting" | "live" |
   return <span className={`h-2 w-2 shrink-0 rounded-full ${tone}`} aria-hidden="true" />;
 }
 
-function CoachAvatar({ active }: { active: boolean }) {
+function CoachAvatar({ status }: { status: "connecting" | "active" | "ended" }) {
+  const expression: MascotExpression =
+    status === "connecting" ? "thinking" : status === "active" ? "talking" : "idle";
+
   return (
-    <div className="relative">
-      {active ? (
-        <>
-          <span className="session-ripple absolute inset-0 rounded-full border border-accent/30" />
-          <span
-            className="session-ripple absolute inset-0 rounded-full border border-accent/20"
-            style={{ animationDelay: "0.8s" }}
-          />
-        </>
-      ) : (
-        <span className="session-breathe absolute -inset-3 rounded-full bg-accent-soft/40" />
-      )}
-      <div className="relative flex h-20 w-20 items-center justify-center rounded-full bg-gradient-to-br from-surface to-accent-soft shadow-elevated ring-4 ring-surface-raised/80">
-        <svg
-          className="h-9 w-9 text-accent"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-          aria-hidden="true"
-        >
-          <circle cx="12" cy="8" r="4" />
-          <path d="M4 20c0-3.3 3.6-6 8-6s8 2.7 8 6" />
-        </svg>
-      </div>
+    <div className="relative flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-accent-soft ring-2 ring-surface">
+      <Mascot expression={expression} size={34} bob={false} />
     </div>
   );
 }
@@ -234,10 +316,13 @@ export interface VoiceSessionProps {
   settings: SessionSettings;
   sessionLabel: string;
   activeTopic?: TopicOption | null;
+  activeTask?: TaskScenario | null;
   appSessionId: string;
   usageUserId?: string | null;
   usageGuestId?: string | null;
   voiceType: string;
+  voiceOptions: VoiceOption[];
+  showVoicePicker: boolean;
   onVoiceChange: (voiceType: string) => void;
   speedRatio: number;
   onSpeedChange: (ratio: number) => void;
@@ -254,12 +339,15 @@ export interface VoiceSessionProps {
 export function VoiceSession({
   voice,
   settings,
-  sessionLabel,
+  sessionLabel: _sessionLabel,
   activeTopic,
+  activeTask,
   appSessionId,
   usageUserId,
   usageGuestId,
   voiceType,
+  voiceOptions,
+  showVoicePicker,
   onVoiceChange,
   speedRatio,
   onSpeedChange,
@@ -279,6 +367,11 @@ export function VoiceSession({
   const [draftText, setDraftText] = useState("");
   const [revealedIds, setRevealedIds] = useState<Set<string>>(() => new Set());
   const [controlsOpen, setControlsOpen] = useState(false);
+  const [taskCardDismissed, setTaskCardDismissed] = useState(false);
+
+  useEffect(() => {
+    setTaskCardDismissed(false);
+  }, [activeTask?.id]);
 
   const revealMessage = useCallback((id: string) => {
     setRevealedIds((prev) => {
@@ -288,17 +381,22 @@ export function VoiceSession({
     });
   }, []);
 
+  const voiceTypeRef = useRef(voiceType);
+  const speedRatioRef = useRef(speedRatio);
+  voiceTypeRef.current = voiceType;
+  speedRatioRef.current = speedRatio;
+
   const handleStart = useCallback(() => {
     void start({
       sessionId: appSessionId,
       userId: usageUserId,
       guestId: usageGuestId,
-      voiceType: settings.voiceType,
-      speedRatio: settings.speedRatio,
+      voiceType: voiceTypeRef.current,
+      speedRatio: speedRatioRef.current,
       systemPrompt: settings.systemPrompt,
       typingTestMode: isTypingTestAvailable() && typingTestMode,
     });
-  }, [start, appSessionId, usageUserId, usageGuestId, settings, typingTestMode]);
+  }, [start, appSessionId, usageUserId, usageGuestId, settings.systemPrompt, typingTestMode]);
 
   const handleSendText = useCallback(() => {
     const text = draftText.trim();
@@ -356,11 +454,16 @@ export function VoiceSession({
 
   const emptyHint = (() => {
     if (isActive) {
-      return typingTestMode
-        ? "打字测试模式 · 在底部输入英文发送"
-        : activeTopic
-          ? "说点什么吧，从这个话题接着聊"
-          : "说点什么吧，我听着呢";
+      if (typingTestMode) {
+        return "打字测试模式 · 在底部输入英文发送";
+      }
+      if (activeTask) {
+        return "说点什么吧，试着完成你的任务目标";
+      }
+      if (activeTopic) {
+        return "说点什么吧，从这个话题接着聊";
+      }
+      return "说点什么吧，我听着呢";
     }
     if (hasHistory) {
       return typingTestMode
@@ -370,27 +473,32 @@ export function VoiceSession({
     if (typingTestMode) {
       return "开启打字测试后，点麦克风开始（无需开口）";
     }
-    if (activeTopic) {
-      return "点麦克风，小榜会从这个话题跟你开口";
+    if (activeTask && !taskCardDismissed) {
+      return "先看任务目标，点「开始闯关」再开麦";
+    }
+    if (activeTask || activeTopic) {
+      return "点麦克风，小榜会从这个场景跟你开口";
     }
     return "点麦克风，随便聊点什么都行";
   })();
 
-  const showTopicBridge = activeTopic && messages.length === 0 && !report;
+  const coachExpression: MascotExpression =
+    status === "connecting" ? "thinking" : status === "active" ? "talking" : "idle";
 
-  const latestMessage = messages.length > 0 ? messages[messages.length - 1] : null;
+  const showTaskCard =
+    activeTask && !taskCardDismissed && messages.length === 0 && !report;
+  const showTopicBridge =
+    !activeTask && activeTopic && messages.length === 0 && !report;
+  const showTaskChecklist = activeTask && taskCardDismissed && !report;
 
   return (
-    <section className="animate-fade-up flex min-h-[calc(100vh-7rem)] flex-col">
-      <div className="relative z-20 mt-2 flex items-center justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-2.5">
+    <section className="animate-fade-up flex min-h-0 w-full flex-1 flex-col md:mx-auto md:max-w-3xl md:overflow-hidden md:rounded-[1.5rem] md:border md:border-border-subtle/80 md:bg-surface md:shadow-card lg:max-w-4xl">
+      <div className="flex shrink-0 items-center justify-between gap-2 px-1 py-1.5 md:px-4 md:pt-4">
+        <div className="flex min-w-0 items-center gap-2">
           <SessionStatusDot status={statusTone} />
-          <div className="min-w-0">
-            <p className="truncate text-sm font-medium text-text">{sessionLabel}</p>
-            <p className="truncate text-xs text-text-muted">{statusLine}</p>
-          </div>
+          <p className="truncate text-xs tabular-nums text-text-muted">{statusLine}</p>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex shrink-0 items-center gap-1.5">
           {isTypingTestAvailable() ? (
             <button
               type="button"
@@ -410,7 +518,7 @@ export function VoiceSession({
                   : "border-border-subtle bg-surface-raised text-text-secondary shadow-card hover:text-accent"
               }`}
             >
-              <span aria-hidden="true">⌨️</span>
+              <KeyboardIcon className="h-3.5 w-3.5" />
               <span className="hidden sm:inline">打字测试</span>
             </button>
           ) : null}
@@ -431,13 +539,16 @@ export function VoiceSession({
       </div>
 
       {controlsOpen ? (
-        <Card variant="elevated" className="relative z-20 mt-3 overflow-hidden">
+        <Card variant="elevated" className="relative z-40 mt-2 shrink-0">
           <div className="flex flex-col divide-y divide-border-subtle sm:flex-row sm:items-stretch sm:divide-x sm:divide-y-0">
-            <VoicePicker
-              value={voiceType}
-              disabled={sessionLocked}
-              onChange={onVoiceChange}
-            />
+            {showVoicePicker ? (
+              <VoicePicker
+                value={voiceType}
+                options={voiceOptions}
+                disabled={sessionLocked}
+                onChange={onVoiceChange}
+              />
+            ) : null}
 
             <div
               className={`flex shrink-0 items-center gap-2 px-3 py-2.5 ${sessionLocked ? "opacity-50" : ""}`}
@@ -488,160 +599,119 @@ export function VoiceSession({
         </Card>
       ) : null}
 
-      <Card variant="inset" className="relative mt-3 flex min-h-0 flex-1 flex-col overflow-hidden">
-        <div
-          className="pointer-events-none absolute -top-16 left-1/2 h-48 w-48 -translate-x-1/2 rounded-full bg-accent-soft/30 blur-3xl"
-          aria-hidden="true"
-        />
-        <div
-          className="pointer-events-none absolute right-0 bottom-24 h-36 w-36 rounded-full bg-accent-muted/20 blur-3xl"
-          aria-hidden="true"
-        />
-
+      <div ref={listRef} className="relative z-10 mt-2 min-h-0 flex-1 overflow-y-auto px-1 md:px-4">
         {errorMessage ? (
-          <div className="relative z-10 mx-4 mt-4 rounded-2xl bg-error-bg px-4 py-3 text-sm text-error">
+          <div className="mb-3 rounded-2xl bg-error-bg px-4 py-3 text-sm text-error">
             {errorMessage}
           </div>
         ) : null}
 
-        {showTopicBridge && activeTopic ? <TopicBridge topic={activeTopic} /> : null}
+        <ul className="space-y-3 pb-2">
+          {showTaskCard && activeTask ? (
+            <li>
+              <TaskCard scenario={activeTask} onStart={() => setTaskCardDismissed(true)} />
+            </li>
+          ) : null}
 
-        {showTopicBridge && !activeTopic ? (
-          <Card
-            variant="ghost"
-            className="animate-fade-up mx-4 mt-4 border border-border-subtle bg-surface-raised/80 p-4"
-          >
-            <p className="text-base font-medium text-text">自由畅聊</p>
-            <p className="mt-1 text-sm leading-relaxed text-text-muted">
-              没有固定话题，点麦克风想到什么说什么就行
-            </p>
-          </Card>
-        ) : null}
+          {showTopicBridge && activeTopic ? (
+            <TopicBridge topic={activeTopic} expression={coachExpression} />
+          ) : null}
 
-        <div ref={listRef} className="relative z-10 flex-1 overflow-y-auto px-4 py-4">
-          {messages.length === 0 ? (
-            <div className="flex min-h-[min(44vh,360px)] flex-col items-center justify-center px-6 text-center">
-              <CoachAvatar active={isActive} />
-              <p className="mt-8 text-base font-medium text-text-secondary">{emptyHint}</p>
-              {!showSubtitle ? (
-                <p className="mt-2 max-w-xs text-xs leading-relaxed text-text-muted">
-                  字幕已关 · 点气泡可看单句
-                </p>
-              ) : null}
-            </div>
-          ) : (
-            <>
-              {!showTopicBridge && activeTopic ? (
-                <p className="mb-4 text-center text-xs text-text-muted">
-                  话题：{activeTopic.title}
-                </p>
-              ) : null}
-              <div className="mb-6 flex flex-col items-center text-center">
-                <CoachAvatar active={isActive} />
-                {latestMessage && (showSubtitle || latestMessage.role === "user" || revealedIds.has(latestMessage.id)) ? (
-                  <div className="mt-5 max-w-sm rounded-2xl border border-border-subtle bg-surface-raised/90 px-4 py-3 shadow-card backdrop-blur-sm">
-                    <p className="text-[10px] font-medium tracking-wide text-text-muted uppercase">
-                      {latestMessage.role === "user" ? "你刚说" : "小榜"}
-                    </p>
+          {!showTaskCard && !activeTask && !activeTopic && messages.length === 0 && !report ? (
+            <CoachOpeningBubble
+              text="想到什么说什么，点麦克风我先跟你打招呼～"
+              expression={coachExpression}
+            />
+          ) : null}
+
+          {showTaskChecklist ? (
+            <li>
+              <TaskChecklist goals={activeTask.goals} title={activeTask.title} />
+            </li>
+          ) : null}
+
+          {messages.map((message) =>
+            message.role === "user" ? (
+              <li key={message.id} className="flex justify-end">
+                <div className="min-w-[5.5rem] max-w-[85%] rounded-[18px] rounded-br-sm bg-accent px-4 py-2.5 text-surface shadow-card">
+                  {message.isListeningDraft ? (
+                    <UserListeningBubble />
+                  ) : (
                     <p
-                      className={`mt-1 text-[15px] leading-relaxed ${
-                        latestMessage.isFinal ? "text-text" : "text-text-muted italic"
+                      className={`break-words text-[15px] leading-relaxed ${
+                        message.isFinal ? "" : "opacity-80 italic"
                       }`}
                     >
-                      {latestMessage.text}
+                      {message.text}
                     </p>
+                  )}
+                </div>
+              </li>
+            ) : (
+              <li key={message.id} className="flex items-end gap-2.5">
+                <CoachAvatar
+                  status={
+                    message.isFinal
+                      ? status === "active"
+                        ? "active"
+                        : "ended"
+                      : "active"
+                  }
+                />
+                {showSubtitle || revealedIds.has(message.id) ? (
+                  <div className="min-w-[5.5rem] max-w-[85%] rounded-[18px] rounded-bl-md border border-border-subtle bg-surface-raised px-4 py-2.5 shadow-card">
+                    <p className="break-words text-[15px] leading-relaxed text-text">{message.text}</p>
                   </div>
-                ) : latestMessage?.role === "bot" ? (
+                ) : (
                   <button
                     type="button"
-                    onClick={() => revealMessage(latestMessage.id)}
-                    className="mt-5 rounded-full border border-dashed border-accent-muted px-4 py-2 text-xs text-text-muted transition hover:border-accent hover:text-text-secondary"
+                    onClick={() => revealMessage(message.id)}
+                    title="点一下看这句"
+                    className="flex min-w-[5.5rem] max-w-[85%] items-center gap-2 rounded-[18px] rounded-bl-md border border-dashed border-accent-muted bg-surface/80 px-4 py-2.5 text-left shadow-card transition active:scale-[0.98]"
                   >
-                    点开看最新一句
+                    <span className="flex h-6 w-6 items-center justify-center rounded-full bg-accent-soft text-accent">
+                      <SpeakerIcon className="h-3.5 w-3.5" />
+                    </span>
+                    <span className="text-[14px] italic leading-relaxed text-text-muted">
+                      {message.isFinal ? "听完啦 · 点开看这句" : "正在说…"}
+                    </span>
                   </button>
-                ) : null}
-              </div>
-
-              <ul className="space-y-3 border-t border-border-subtle/60 pt-4 pb-2">
-                {messages.map((message) =>
-                  message.role === "user" ? (
-                    <li key={message.id} className="flex justify-end">
-                      <div className="max-w-[85%] rounded-[18px] rounded-br-sm bg-accent px-4 py-2.5 text-surface shadow-card">
-                        <p
-                          className={`text-[15px] leading-relaxed ${
-                            message.isFinal ? "" : "opacity-80 italic"
-                          }`}
-                        >
-                          {message.text}
-                        </p>
-                      </div>
-                    </li>
-                  ) : (
-                    <li key={message.id} className="flex items-start justify-start gap-2.5">
-                      <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-accent-soft ring-2 ring-surface-raised">
-                        <svg
-                          className="h-3.5 w-3.5 text-accent"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="1.75"
-                          aria-hidden="true"
-                        >
-                          <circle cx="12" cy="8" r="3.5" />
-                          <path d="M5 19c0-2.8 3.1-5 7-5s7 2.2 7 5" />
-                        </svg>
-                      </span>
-                      {showSubtitle || revealedIds.has(message.id) ? (
-                        <div className="max-w-[85%] rounded-[18px] rounded-bl-sm border border-border-subtle bg-surface-raised px-4 py-2.5 shadow-card">
-                          <p className="text-[15px] leading-relaxed text-text">{message.text}</p>
-                        </div>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => revealMessage(message.id)}
-                          title="点一下看这句"
-                          className="flex max-w-[85%] items-center gap-2 rounded-[18px] rounded-bl-sm border border-dashed border-accent-muted bg-surface/80 px-4 py-2.5 text-left shadow-card transition hover:border-accent hover:bg-surface"
-                        >
-                          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-accent-soft text-xs">
-                            🔊
-                          </span>
-                          <span className="text-[14px] italic leading-relaxed text-text-muted">
-                            {message.isFinal ? "听完啦 · 点开看这句" : "正在说…"}
-                          </span>
-                        </button>
-                      )}
-                    </li>
-                  ),
                 )}
-              </ul>
-            </>
+              </li>
+            ),
           )}
+        </ul>
 
-          {reportLoading ? (
-            <div className="mt-8 flex flex-col items-center gap-3 py-6">
-              <span className="h-8 w-8 animate-pulse rounded-full bg-accent-soft" />
-              <p className="text-sm text-text-muted">正在整理今天的复盘…</p>
-            </div>
-          ) : null}
+        {reportLoading ? (
+          <div className="mt-6 flex flex-col items-center gap-3 py-4">
+            <Mascot expression="thinking" size={40} />
+            <p className="text-sm text-text-muted">正在整理今天的复盘…</p>
+          </div>
+        ) : null}
 
-          {reportError ? (
-            <div className="mt-6 rounded-2xl bg-error-bg px-5 py-3 text-sm text-error">{reportError}</div>
-          ) : null}
+        {reportError ? (
+          <div className="mt-4 rounded-2xl bg-error-bg px-5 py-3 text-sm text-error">{reportError}</div>
+        ) : null}
 
-          {report ? (
-            <div className="mt-6 border-t-2 border-accent/30 pt-2">
-              <ReportView report={report} wordCount={wordCount} sentenceCount={sentenceCount} />
-            </div>
-          ) : null}
-        </div>
+        {report ? (
+          <div className="mt-4 border-t-2 border-accent/30 pt-2">
+            <ReportView
+              report={report}
+              wordCount={wordCount}
+              sentenceCount={sentenceCount}
+              taskGoals={activeTask?.goals}
+            />
+          </div>
+        ) : null}
+      </div>
 
-        <div className="relative z-10 h-7 px-4">
-          {hint ? (
-            <p className="animate-pulse text-center text-xs text-text-muted">{hint}</p>
-          ) : null}
-        </div>
+      <div className="relative z-10 h-5 shrink-0 px-1">
+        {hint ? (
+          <p className="animate-pulse truncate text-center text-[11px] text-text-muted">{hint}</p>
+        ) : null}
+      </div>
 
-        <div className="relative z-10 border-t border-border-subtle bg-surface/80 px-4 py-5 backdrop-blur-md">
+      <div className="relative z-10 shrink-0 rounded-b-[1.5rem] border-t border-border-subtle/80 bg-surface/90 px-4 py-4 shadow-card backdrop-blur-md md:px-6 md:py-5">
           {isTypingTestAvailable() && typingTestMode && isActive ? (
             <form
               className="mb-4 flex gap-2"
@@ -708,21 +778,21 @@ export function VoiceSession({
                 onClick={handleStart}
                 disabled={reportLoading}
                 aria-label={hasHistory ? "继续对话" : "开始对话"}
-                className="group relative flex h-[4.5rem] w-[4.5rem] items-center justify-center rounded-full bg-gradient-to-br from-text-secondary to-text text-surface shadow-elevated transition-transform hover:scale-[1.03] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60"
+                className="group relative flex h-[4.5rem] w-[4.5rem] items-center justify-center rounded-full bg-gradient-to-br from-accent to-accent-hover text-surface shadow-[var(--shadow-pop)] transition-transform duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] hover:-translate-y-0.5 hover:scale-[1.06] active:scale-[0.9] disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <span className="absolute inset-0 rounded-full bg-white/10 opacity-0 transition group-hover:opacity-100" />
                 <MicIcon className="relative h-8 w-8" />
               </button>
             )}
 
-            <p className="text-[11px] tracking-wide text-text-muted">
+            <p className="text-center text-[11px] tracking-wide text-text-muted">
               {isActive
                 ? typingTestMode
                   ? "打字测试 · 底部输入发送"
                   : "麦克风开着 · 随时开口"
                 : hasHistory
                   ? "轻触继续对话"
-                  : "轻触开始"}
+                  : emptyHint}
             </p>
 
             {!isActive && canGenerateReport ? (
@@ -731,8 +801,7 @@ export function VoiceSession({
               </Button>
             ) : null}
           </div>
-        </div>
-      </Card>
+      </div>
     </section>
   );
 }

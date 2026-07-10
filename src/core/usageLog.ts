@@ -4,7 +4,7 @@ export interface LogApiUsageInput {
   userId?: string | null;
   guestId?: string | null;
   sessionId?: string | null;
-  apiProvider: "deepseek" | "doubao";
+  apiProvider: "deepseek" | "doubao" | "siliconflow";
   modelName: string;
   tokensUsed?: number;
   durationSeconds?: number;
