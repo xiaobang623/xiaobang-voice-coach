@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppNavBar } from "./components/AppNavBar";
 import { BottomTabBar, type MainTab } from "./components/BottomTabBar";
-import { GrowthPanel } from "./components/GrowthView";
 import { MeView } from "./components/MeView";
-import { TopicSelector } from "./components/TopicSelector";
+import { TopicSelector, type PracticeInsight } from "./components/TopicSelector";
 import { VoiceSession } from "./components/VoiceSession";
 import {
   buildTranscriptFromMessages,
@@ -21,6 +20,7 @@ import { loadUserMemory, loadGrowthPageData, persistGuestSessionReport, persistS
 import {
   GROWTH_CACHE_STALE_MS,
   growthCacheAgeMs,
+  readGrowthCache,
   writeGrowthCache,
 } from "./core/growthCache";
 import { CHAT_TOPICS } from "./config/chatTopics";
@@ -30,7 +30,7 @@ import {
   buildSystemPrompt,
   buildTaskSystemPrompt,
 } from "./config/session";
-import type { MemorySummary, ReportJSON, SessionSettings, TaskScenario } from "./types";
+import type { GrowthPageData, MemorySummary, ReportJSON, SessionSettings, TaskScenario } from "./types";
 
 type PracticeScreen = "topics" | "chat";
 
@@ -45,11 +45,14 @@ function App() {
   const [reportLoading, setReportLoading] = useState(false);
   const [reportError, setReportError] = useState<string | null>(null);
   const [userMemory, setUserMemory] = useState<MemorySummary | null>(null);
+  const [homeGrowthData, setHomeGrowthData] = useState<GrowthPageData | null>(null);
+  const [homeInsightLoading, setHomeInsightLoading] = useState(false);
   const sessionIdRef = useRef(crypto.randomUUID());
   const doubaoLoggedSessionRef = useRef<string | null>(null);
 
   const [topicId, setTopicId] = useState<string | null>(null);
   const [accountDeepLink, setAccountDeepLink] = useState(0);
+  const [recordDeepLink, setRecordDeepLink] = useState(0);
   const [accountReturnTab, setAccountReturnTab] = useState<MainTab | null>(null);
 
   const inChat = practiceScreen === "chat";
@@ -81,19 +84,31 @@ function App() {
 
   useEffect(() => {
     if (!isConfigured || isAnonymous || !userId) {
+      setHomeGrowthData(null);
+      setHomeInsightLoading(false);
       return;
     }
 
+    const cached = readGrowthCache(userId);
+    if (cached) {
+      setHomeGrowthData(cached);
+    }
+
     const cacheAge = growthCacheAgeMs(userId);
-    if (cacheAge !== null && cacheAge < GROWTH_CACHE_STALE_MS) {
+    if (cached && cacheAge !== null && cacheAge < GROWTH_CACHE_STALE_MS) {
       return;
     }
 
     let cancelled = false;
     void (async () => {
+      setHomeInsightLoading(!cached);
       const data = await loadGrowthPageData();
       if (!cancelled && data) {
         writeGrowthCache(userId, data);
+        setHomeGrowthData(data);
+      }
+      if (!cancelled) {
+        setHomeInsightLoading(false);
       }
     })();
 
@@ -152,6 +167,26 @@ function App() {
     () => resolveUsageActor({ userId, isAnonymous }),
     [userId, isAnonymous],
   );
+
+  const homePracticeInsight = useMemo<PracticeInsight | null>(() => {
+    if (!homeGrowthData) {
+      return null;
+    }
+
+    const sevenDaysAgo = Date.now() - 7 * 86_400_000;
+    const recentHistory = homeGrowthData.history.filter(
+      (item) => new Date(item.createdAt).getTime() >= sevenDaysAgo,
+    );
+    const topMistake = homeGrowthData.stats.frequentMistakes[0] ?? null;
+
+    return {
+      sessionCount7d: recentHistory.length,
+      durationSeconds7d: recentHistory.reduce((sum, item) => sum + item.durationSeconds, 0),
+      latestUserLevel: homeGrowthData.stats.latestUserLevel,
+      topMistakeType: topMistake?.type ?? null,
+      topMistakeCount: topMistake?.count ?? 0,
+    };
+  }, [homeGrowthData]);
 
   const getVoiceDurationSeconds = useCallback(() => {
     if (!voice.conversationStartedAt) {
@@ -243,6 +278,14 @@ function App() {
           report: nextReport,
         });
 
+        if (userId) {
+          const data = await loadGrowthPageData();
+          if (data) {
+            writeGrowthCache(userId, data);
+            setHomeGrowthData(data);
+          }
+        }
+
         try {
           const nextMemory = await extractMemory({
             transcript,
@@ -275,7 +318,7 @@ function App() {
     } finally {
       setReportLoading(false);
     }
-  }, [voice, topicId, isAnonymous, userMemory, usageActor, getVoiceDurationSeconds, logVoiceUsage]);
+  }, [voice, topicId, isAnonymous, userMemory, usageActor, userId, getVoiceDurationSeconds, logVoiceUsage]);
 
   const sessionLabel = useMemo(() => scenarioLabel(topicId), [topicId]);
 
@@ -297,7 +340,12 @@ function App() {
   }, [inChat]);
 
   const handleGoToRecord = useCallback(() => {
-    setMainTab("record");
+    setMainTab("me");
+    setRecordDeepLink((count) => count + 1);
+  }, []);
+
+  const handleRecordDeepLinkConsumed = useCallback(() => {
+    setRecordDeepLink(0);
   }, []);
 
   const handleGoToAccount = useCallback(() => {
@@ -320,7 +368,7 @@ function App() {
   }, []);
 
   return (
-    <div className="app-shell flex min-h-dvh flex-col bg-bg text-text">
+    <div className={`app-shell flex min-h-dvh flex-col ${inChat ? "bg-bg-canvas text-ink-on-canvas" : "bg-bg text-text"}`}>
       {!inChat ? (
         <AppNavBar
           active={mainTab}
@@ -331,16 +379,16 @@ function App() {
       ) : null}
 
       {inChat ? (
-        <header className="app-top-bar sticky top-0 z-30 border-b border-border-subtle/70 bg-bg/90 backdrop-blur-xl">
-          <div className="page-shell flex items-center gap-3 py-3">
+        <header className="app-top-bar sticky top-0 z-30 border-b border-white/10 bg-bg-canvas/90 backdrop-blur-xl">
+          <div className="page-shell page-shell--flow flex items-center gap-3 py-3">
             <button
               type="button"
               onClick={handleExitChat}
-              className="flex shrink-0 items-center gap-0.5 rounded-full px-2 py-1.5 text-sm text-text-secondary transition-colors hover:bg-bg-warm/70 hover:text-text active:scale-95"
+              className="flex shrink-0 items-center gap-0.5 rounded-full px-2 py-1.5 text-sm text-ink-on-canvas-soft transition-colors hover:bg-white/10 hover:text-ink-on-canvas active:scale-95"
             >
               ← 返回
             </button>
-            <p className="min-w-0 flex-1 truncate text-center text-sm font-medium text-text">
+            <p className="min-w-0 flex-1 truncate text-center text-sm font-medium text-ink-on-canvas">
               {sessionLabel}
             </p>
             <span className="w-14 shrink-0" aria-hidden="true" />
@@ -362,6 +410,8 @@ function App() {
             showGuestHint={isConfigured && isAnonymous}
             onGoToAccount={handleGoToAccount}
             onGoToRecord={handleGoToRecord}
+            practiceInsight={homePracticeInsight}
+            insightLoading={homeInsightLoading}
           />
         ) : null}
 
@@ -397,24 +447,9 @@ function App() {
             accountDeepLink={accountDeepLink}
             onAccountExit={accountReturnTab ? handleAccountExit : undefined}
             onAccountDeepLinkConsumed={handleAccountDeepLinkConsumed}
+            recordDeepLink={recordDeepLink}
+            onRecordDeepLinkConsumed={handleRecordDeepLinkConsumed}
           />
-        ) : null}
-
-        {mainTab === "record" ? (
-          <section className="animate-fade-up py-2">
-            <div className="mb-7 flex items-end justify-between gap-4">
-              <div>
-                <p className="text-xs font-medium tracking-wide text-text-muted">语言能力档案</p>
-                <h2 className="mt-2 font-display text-[1.65rem] font-medium tracking-tight text-text">
-                  记录每一次开口
-                </h2>
-              </div>
-              <div className="hidden rounded-full bg-bg-warm px-3 py-1.5 text-xs font-medium text-text-muted md:inline-flex">
-                最近 7 天
-              </div>
-            </div>
-            <GrowthPanel isGuest={isAnonymous} onGoToAccount={handleGoToAccount} />
-          </section>
         ) : null}
       </main>
 

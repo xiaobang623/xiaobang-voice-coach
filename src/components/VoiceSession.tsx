@@ -288,16 +288,34 @@ function VoicePicker({ value, options, disabled, onChange }: VoicePickerProps) {
 }
 
 function SessionStatusDot({ status }: { status: "idle" | "connecting" | "live" | "paused" }) {
+  // ai-mark from redesign/voice-session.html: teal radial dot with soft ring
   const tone =
     status === "live"
-      ? "bg-accent shadow-[0_0_0_3px_rgba(184,132,110,0.25)]"
+      ? "bg-[radial-gradient(circle_at_32%_28%,#8FC4BE,#3F6E6B_70%)] shadow-[0_0_0_3px_rgba(143,196,190,0.14)]"
       : status === "connecting"
-        ? "bg-accent-muted animate-pulse"
+        ? "bg-[radial-gradient(circle_at_32%_28%,#D8B876,#A6813F_70%)] animate-pulse"
         : status === "paused"
-          ? "bg-text-muted"
-          : "bg-border";
+          ? "bg-ink-on-canvas-faint"
+          : "bg-[rgba(244,243,240,0.24)]";
 
-  return <span className={`h-2 w-2 shrink-0 rounded-full ${tone}`} aria-hidden="true" />;
+  return <span className={`h-[18px] w-[18px] shrink-0 rounded-full ${tone}`} aria-hidden="true" />;
+}
+
+function RealtimeHintToast({ message }: { message: string }) {
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="pointer-events-none absolute right-3 top-16 z-50 max-w-[min(22rem,calc(100%-1.5rem))] animate-fade-up rounded-2xl border border-white/12 bg-surface-canvas-raised/92 px-3.5 py-3 text-ink-on-canvas shadow-elevated backdrop-blur-md md:right-7 md:top-20"
+    >
+      <div className="flex items-start gap-2.5">
+        <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-accent-teal/18 text-[12px] text-accent-teal">
+          ✦
+        </span>
+        <p className="text-[12.5px] leading-snug text-ink-on-canvas-soft">{message}</p>
+      </div>
+    </div>
+  );
 }
 
 function CoachAvatar({ status }: { status: "connecting" | "active" | "ended" }) {
@@ -492,11 +510,13 @@ export function VoiceSession({
   const showTaskChecklist = activeTask && taskCardDismissed && !report;
 
   return (
-    <section className="animate-fade-up flex min-h-0 w-full flex-1 flex-col md:mx-auto md:max-w-3xl md:overflow-hidden md:rounded-[1.5rem] md:border md:border-border-subtle/80 md:bg-surface md:shadow-card lg:max-w-4xl">
+    <section className="animate-fade-up flex min-h-0 w-full flex-1 flex-col bg-bg-canvas text-ink-on-canvas md:mx-auto md:max-w-[40rem] md:overflow-hidden md:rounded-[24px] md:border md:border-white/10">
+      {hint ? <RealtimeHintToast message={hint} /> : null}
+
       <div className="flex shrink-0 items-center justify-between gap-2 px-1 py-1.5 md:px-4 md:pt-4">
         <div className="flex min-w-0 items-center gap-2">
           <SessionStatusDot status={statusTone} />
-          <p className="truncate text-xs tabular-nums text-text-muted">{statusLine}</p>
+          <p className="truncate text-sm tabular-nums text-ink-on-canvas-soft">{statusLine}</p>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
           {isTypingTestAvailable() ? (
@@ -512,10 +532,10 @@ export function VoiceSession({
                     ? "关闭打字测试"
                     : "开启打字测试（免麦克风）"
               }
-              className={`flex h-10 items-center gap-1.5 rounded-full border px-3 text-[11px] font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${
+              className={`flex h-11 items-center gap-1.5 rounded-full border px-3.5 text-[11px] font-medium transition disabled:cursor-not-allowed disabled:opacity-50 active:scale-[0.94] ${
                 typingTestMode
-                  ? "border-accent bg-accent-soft/50 text-accent"
-                  : "border-border-subtle bg-surface-raised text-text-secondary shadow-card hover:text-accent"
+                  ? "border-ink-on-canvas bg-ink-on-canvas text-bg-canvas"
+                  : "border-[rgba(244,243,240,0.14)] bg-[rgba(244,243,240,0.08)] text-ink-on-canvas-soft hover:text-ink-on-canvas"
               }`}
             >
               <KeyboardIcon className="h-3.5 w-3.5" />
@@ -527,10 +547,10 @@ export function VoiceSession({
             onClick={() => setControlsOpen((open) => !open)}
             aria-expanded={controlsOpen}
             aria-label="练习设置"
-            className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full border transition ${
+            className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full border transition active:scale-[0.94] ${
               controlsOpen
-                ? "border-accent bg-accent-soft/50 text-accent"
-                : "border-border-subtle bg-surface-raised text-text-secondary shadow-card hover:text-accent"
+                ? "border-ink-on-canvas bg-ink-on-canvas text-bg-canvas"
+                : "border-[rgba(244,243,240,0.14)] bg-[rgba(244,243,240,0.08)] text-ink-on-canvas hover:bg-[rgba(244,243,240,0.16)]"
             }`}
           >
             <SlidersIcon className="h-4 w-4" />
@@ -539,7 +559,7 @@ export function VoiceSession({
       </div>
 
       {controlsOpen ? (
-        <Card variant="elevated" className="relative z-40 mt-2 shrink-0">
+        <Card variant="elevated" className="relative z-40 mt-2 shrink-0 border-white/10 bg-surface-canvas-raised text-ink-on-canvas">
           <div className="flex flex-col divide-y divide-border-subtle sm:flex-row sm:items-stretch sm:divide-x sm:divide-y-0">
             {showVoicePicker ? (
               <VoicePicker
@@ -633,7 +653,7 @@ export function VoiceSession({
           {messages.map((message) =>
             message.role === "user" ? (
               <li key={message.id} className="flex justify-end">
-                <div className="min-w-[5.5rem] max-w-[85%] rounded-[18px] rounded-br-sm bg-accent px-4 py-2.5 text-surface shadow-card">
+                <div className="min-w-[5.5rem] max-w-[85%] rounded-[18px] rounded-br-sm border border-white/10 bg-surface-canvas-raised px-4 py-2.5 text-ink-on-canvas">
                   {message.isListeningDraft ? (
                     <UserListeningBubble />
                   ) : (
@@ -659,8 +679,8 @@ export function VoiceSession({
                   }
                 />
                 {showSubtitle || revealedIds.has(message.id) ? (
-                  <div className="min-w-[5.5rem] max-w-[85%] rounded-[18px] rounded-bl-md border border-border-subtle bg-surface-raised px-4 py-2.5 shadow-card">
-                    <p className="break-words text-[15px] leading-relaxed text-text">{message.text}</p>
+                  <div className="min-w-[5.5rem] max-w-[85%] rounded-[18px] rounded-bl-md border border-white/10 bg-surface-canvas-raised px-4 py-2.5">
+                    <p className="break-words text-[15px] leading-relaxed text-ink-on-canvas">{message.text}</p>
                   </div>
                 ) : (
                   <button
@@ -685,7 +705,7 @@ export function VoiceSession({
         {reportLoading ? (
           <div className="mt-6 flex flex-col items-center gap-3 py-4">
             <Mascot expression="thinking" size={40} />
-            <p className="text-sm text-text-muted">正在整理今天的复盘…</p>
+            <p className="text-sm text-ink-on-canvas-soft">正在整理今天的复盘…</p>
           </div>
         ) : null}
 
@@ -694,7 +714,7 @@ export function VoiceSession({
         ) : null}
 
         {report ? (
-          <div className="mt-4 border-t-2 border-accent/30 pt-2">
+          <div className="mt-4 rounded-t-[24px] bg-bg p-5 text-text">
             <ReportView
               report={report}
               wordCount={wordCount}
@@ -705,13 +725,7 @@ export function VoiceSession({
         ) : null}
       </div>
 
-      <div className="relative z-10 h-5 shrink-0 px-1">
-        {hint ? (
-          <p className="animate-pulse truncate text-center text-[11px] text-text-muted">{hint}</p>
-        ) : null}
-      </div>
-
-      <div className="relative z-10 shrink-0 rounded-b-[1.5rem] border-t border-border-subtle/80 bg-surface/90 px-4 py-4 shadow-card backdrop-blur-md md:px-6 md:py-5">
+      <div className="relative z-10 shrink-0 rounded-b-[24px] border-t border-white/10 bg-surface-canvas-raised/90 px-4 py-4 backdrop-blur-md md:px-6 md:py-5">
           {isTypingTestAvailable() && typingTestMode && isActive ? (
             <form
               className="mb-4 flex gap-2"
@@ -726,7 +740,7 @@ export function VoiceSession({
                 onChange={(event) => setDraftText(event.target.value)}
                 placeholder="Type English here to test voice & topic…"
                 disabled={status === "connecting"}
-                className="min-w-0 flex-1 rounded-full border border-border bg-surface-raised px-4 py-2.5 text-sm text-text placeholder:text-text-muted focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20 disabled:opacity-60"
+                className="min-w-0 flex-1 rounded-full border border-white/15 bg-bg-canvas px-4 py-2.5 text-sm text-ink-on-canvas placeholder:text-ink-on-canvas-faint focus:border-white/40 focus:outline-none focus:ring-2 focus:ring-white/10 disabled:opacity-60"
               />
               <Button
                 type="submit"
@@ -745,12 +759,18 @@ export function VoiceSession({
                 size="sm"
                 onClick={() => stop()}
                 disabled={status === "connecting" || reportLoading}
+                className="!border-[rgba(244,243,240,0.18)] !bg-[rgba(244,243,240,0.1)] !text-ink-on-canvas backdrop-blur-[16px] hover:!bg-[rgba(244,243,240,0.16)]"
               >
                 <PauseIcon className="h-3.5 w-3.5" />
                 暂停
               </Button>
               {canGenerateReport ? (
-                <Button size="sm" onClick={onEndAndReport} disabled={reportLoading}>
+                <Button
+                  size="sm"
+                  onClick={onEndAndReport}
+                  disabled={reportLoading}
+                  className="!bg-rust !text-[#FBEEE8]"
+                >
                   结束并复盘
                 </Button>
               ) : null}
@@ -763,12 +783,12 @@ export function VoiceSession({
                 className="relative flex h-[4.5rem] w-[4.5rem] items-center justify-center"
                 aria-hidden="true"
               >
-                <span className="session-ripple absolute inset-0 rounded-full bg-accent/20" />
+                <span className="session-ripple absolute inset-0 rounded-full bg-accent-teal/20" />
                 <span
-                  className="session-ripple absolute inset-0 rounded-full bg-accent/15"
+                  className="session-ripple absolute inset-0 rounded-full bg-accent-teal/15"
                   style={{ animationDelay: "0.9s" }}
                 />
-                <div className="relative flex h-[4.5rem] w-[4.5rem] items-center justify-center rounded-full bg-gradient-to-br from-accent-muted to-accent text-surface shadow-elevated">
+                <div className="relative flex h-[4.5rem] w-[4.5rem] items-center justify-center rounded-full bg-ink-on-canvas text-bg-canvas shadow-elevated">
                   <MicIcon className="h-8 w-8" />
                 </div>
               </div>
@@ -778,14 +798,14 @@ export function VoiceSession({
                 onClick={handleStart}
                 disabled={reportLoading}
                 aria-label={hasHistory ? "继续对话" : "开始对话"}
-                className="group relative flex h-[4.5rem] w-[4.5rem] items-center justify-center rounded-full bg-gradient-to-br from-accent to-accent-hover text-surface shadow-[var(--shadow-pop)] transition-transform duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] hover:-translate-y-0.5 hover:scale-[1.06] active:scale-[0.9] disabled:cursor-not-allowed disabled:opacity-60"
+                className="group relative flex h-[4.5rem] w-[4.5rem] items-center justify-center rounded-full bg-ink-on-canvas text-bg-canvas shadow-elevated transition-transform duration-200 ease-[cubic-bezier(0.4,0,0.2,1)] hover:scale-[1.04] active:scale-[0.94] disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <span className="absolute inset-0 rounded-full bg-white/10 opacity-0 transition group-hover:opacity-100" />
                 <MicIcon className="relative h-8 w-8" />
               </button>
             )}
 
-            <p className="text-center text-[11px] tracking-wide text-text-muted">
+            <p className="text-center text-[12.5px] text-ink-on-canvas-faint">
               {isActive
                 ? typingTestMode
                   ? "打字测试 · 底部输入发送"
@@ -796,7 +816,13 @@ export function VoiceSession({
             </p>
 
             {!isActive && canGenerateReport ? (
-              <Button variant="outline" size="sm" onClick={onEndAndReport} disabled={reportLoading}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onEndAndReport}
+                disabled={reportLoading}
+                className="!border-[rgba(244,243,240,0.18)] !bg-[rgba(244,243,240,0.1)] !text-ink-on-canvas backdrop-blur-[16px] hover:!bg-[rgba(244,243,240,0.16)]"
+              >
                 结束本次对话并生成复盘
               </Button>
             ) : null}

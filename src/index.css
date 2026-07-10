@@ -12,6 +12,11 @@
   --color-surface: #ffffff;
   --color-surface-raised: #ffffff;
   --color-surface-muted: #f1efe8;
+  --color-bg-canvas: #14171b;
+  --color-surface-canvas-raised: #1e2227;
+  --color-ink-on-canvas: #f4f3f0;
+  --color-ink-on-canvas-soft: #a7abb0;
+  --color-ink-on-canvas-faint: #777d84;
 
   --color-ink: #1b1e22;
   --color-ink-soft: #5b6169;
@@ -41,11 +46,13 @@
   --color-rust: #a85a42;
   --color-accent-gold: #a6813f;
   --color-accent-teal: #3f6e6b;
+  --color-accent-teal-on-canvas: #8fc4be;
+  --color-accent-gold-on-canvas: #d8b876;
 
   --radius-card: 1rem;
-  --shadow-card: 0 1px 2px rgba(17, 24, 39, 0.05), 0 8px 24px rgba(17, 24, 39, 0.04);
-  --shadow-elevated: 0 12px 30px rgba(17, 24, 39, 0.08);
-  --shadow-pop: 0 10px 24px rgba(17, 24, 39, 0.14);
+  --shadow-card: 0 1px 2px rgba(20, 18, 14, 0.05);
+  --shadow-elevated: 0 8px 24px rgba(20, 18, 14, 0.08);
+  --shadow-pop: 0 28px 56px rgba(10, 9, 7, 0.16);
 
   --page-px: 1.25rem;
   --page-max-w: 28rem;
@@ -60,7 +67,7 @@
 
 @media (min-width: 1024px) {
   :root {
-    --page-max-w: 72rem;
+    --page-max-w: 61.25rem;
     --page-px: 2rem;
   }
 }
@@ -96,6 +103,38 @@ body,
   width: 100%;
   max-width: var(--page-max-w);
   padding-inline: var(--page-px);
+}
+
+.page-shell--flow {
+  max-width: 40rem;
+}
+
+.surface-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 1rem;
+}
+
+.surface-card--muted {
+  background: var(--color-surface-muted);
+  border-color: var(--color-surface-muted);
+}
+
+/* Typography helpers — ported from OpenDesign redesign/styles.css */
+.eyebrow {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-ink-faint);
+}
+
+.section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-ink-soft);
+  letter-spacing: -0.01em;
+  margin: 0 0 12px;
 }
 
 .app-top-bar {

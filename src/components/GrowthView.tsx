@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { ReportView } from "./ReportView";
 import { Card } from "./ui/Card";
+import { Button } from "./ui/Button";
 import type {
   GrowthStats,
   ReportHistoryItem,
   ReportJSON,
-  UserLevel,
 } from "../types";
+import { getCefrLevel, getLevelInfo } from "../config/levels";
 import {
   GROWTH_CACHE_STALE_MS,
   growthCacheAgeMs,
@@ -16,17 +17,12 @@ import {
 import { loadGrowthPageData, loadReportDetail } from "../core/storage";
 import { useAuth } from "../hooks/useAuth";
 import { scenarioLabel } from "../config/topics";
+import { LevelSystemCard } from "./LevelSystem";
 
 export interface GrowthPanelProps {
   isGuest: boolean;
   onGoToAccount?: () => void;
 }
-
-const USER_LEVEL_LABEL: Record<UserLevel, string> = {
-  beginner: "初级",
-  intermediate: "中级",
-  advanced: "高级",
-};
 
 function formatDuration(seconds: number): string {
   const hours = Math.floor(seconds / 3600);
@@ -59,23 +55,23 @@ function topicLabel(topic: string | null): string {
 
 function StatTile({ label, value }: { label: string; value: string }) {
   return (
-    <Card variant="default" className="p-4 md:p-5">
-      <div className="text-[20px] font-bold tracking-tight text-text md:text-[24px]">{value}</div>
-      <div className="mt-1 text-[11px] text-text-muted">{label}</div>
+    <Card variant="default" className="px-3 py-3.5">
+      <div className="text-[20px] font-bold tracking-tight text-text">{value}</div>
+      <div className="mt-[3px] text-[11px] text-text-muted">{label}</div>
     </Card>
   );
 }
 
 function GrowthSkeleton() {
   return (
-    <div className="animate-pulse space-y-8">
+    <div className="mx-auto w-full max-w-[44rem] animate-pulse space-y-8">
       <div className="h-4 w-40 rounded-full bg-bg-warm" />
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         {Array.from({ length: 3 }).map((_, index) => (
           <div key={index} className="h-24 rounded-[var(--radius-card)] bg-surface" />
         ))}
       </div>
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+      <div className="grid gap-4">
         <div className="h-48 rounded-[var(--radius-card)] bg-surface" />
         <div className="h-48 rounded-[var(--radius-card)] bg-surface" />
       </div>
@@ -105,12 +101,12 @@ function ReviewRow({
       >
         <div>
           <div className="text-sm font-semibold tracking-tight text-text">{topicLabel(item.topic)}</div>
-          <div className="mt-1 text-xs text-text-muted">{formatDate(item.createdAt)}</div>
+          <div className="mt-[3px] text-xs text-text-muted">{formatDate(item.createdAt)}</div>
         </div>
         <div className="text-right">
           <div className="text-xs text-text-muted">{formatDuration(item.durationSeconds)}</div>
-          <div className="mt-1 text-[13px] font-semibold text-spark">
-            {USER_LEVEL_LABEL[item.userLevel]}
+          <div className="mt-1 text-[13px] font-bold text-accent-gold">
+            {getCefrLevel(item.userLevel)}
           </div>
         </div>
       </button>
@@ -226,16 +222,12 @@ export function GrowthPanel({ isGuest, onGoToAccount }: GrowthPanelProps) {
 
   if (isGuest) {
     return (
-      <Card variant="default" className="p-6 text-sm leading-relaxed text-text-muted">
+      <Card variant="default" className="mx-auto w-full max-w-[44rem] p-6 text-sm leading-relaxed text-text-muted">
         登录后，这里会记录你的练习次数、总时长、连续练习、历史复盘和常见表达问题。
         {onGoToAccount ? (
-          <button
-            type="button"
-            onClick={onGoToAccount}
-            className="mt-4 inline-flex w-full items-center justify-center rounded-[16px] bg-accent px-6 py-3.5 text-sm font-medium text-surface shadow-card transition hover:bg-accent-hover"
-          >
+          <Button className="mt-4" fullWidth onClick={onGoToAccount}>
             登录 / 注册
-          </button>
+          </Button>
         ) : null}
       </Card>
     );
@@ -246,37 +238,46 @@ export function GrowthPanel({ isGuest, onGoToAccount }: GrowthPanelProps) {
   }
 
   if (error && !stats) {
-    return <p className="text-sm text-error">{error}</p>;
+    return <p className="mx-auto w-full max-w-[44rem] text-sm text-error">{error}</p>;
   }
 
   if (!stats || stats.sessionCount === 0) {
     return (
-      <Card variant="ghost" className="border-dashed p-6 text-sm leading-relaxed text-text-muted">
+      <Card variant="ghost" className="mx-auto w-full max-w-[44rem] border-dashed p-6 text-sm leading-relaxed text-text-muted">
         还没有完成的练习。去「练习」聊一次并生成复盘后，这里会开始累积你的语言档案。
       </Card>
     );
   }
 
-  const latestLevel = stats.latestUserLevel ? USER_LEVEL_LABEL[stats.latestUserLevel] : "B2";
+  const latestLevel = getCefrLevel(stats.latestUserLevel);
+  const latestLevelInfo = getLevelInfo(latestLevel);
 
   return (
-    <div className="space-y-6">
+    <div className="mx-auto w-full max-w-[44rem] space-y-6">
       <div className="flex items-end justify-between gap-4">
         <div>
-          <p className="text-xs font-semibold tracking-wide text-text-muted">语言能力档案</p>
-          <div className="mt-3 text-[clamp(44px,5vw,64px)] font-bold leading-none tracking-tight text-text">
+          <p className="eyebrow">语言能力档案</p>
+          <div className="mt-4 text-[clamp(44px,5vw,64px)] font-bold leading-none tracking-[-0.03em] text-text">
             {latestLevel}
           </div>
-          <p className="mt-1 text-[13px] text-text-secondary">中高级 · 口语流利度良好</p>
+          <p className="mt-1 text-[13px] text-text-secondary">
+            {latestLevelInfo.shortLabel} · {latestLevelInfo.ability}
+          </p>
         </div>
-        <div className="text-[12.5px] font-semibold text-spark">
-          {refreshing ? "正在更新" : "↑ 较上月提升"}
-        </div>
+        {refreshing ? (
+          <div className="text-[12.5px] font-semibold text-accent-teal">正在更新</div>
+        ) : null}
       </div>
 
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+      <div className="space-y-7">
         <div>
-          <div className="grid grid-cols-3 gap-3">
+          <LevelSystemCard
+            userLevel={stats.latestUserLevel}
+            title="完整等级体系"
+            note="基于最近练习估算"
+          />
+
+          <div className="mt-3 grid grid-cols-1 gap-2.5 sm:grid-cols-3">
             <StatTile label="练习次数" value={`${stats.sessionCount}`} />
             <StatTile label="总时长" value={formatDuration(stats.totalDurationSeconds)} />
             <StatTile label="连续天数" value={`${stats.currentStreakDays}`} />
@@ -285,7 +286,7 @@ export function GrowthPanel({ isGuest, onGoToAccount }: GrowthPanelProps) {
           <div className="mt-7">
             <div className="section-title">常见问题模式</div>
             <Card variant="default" className="p-0">
-              <div className="divide-y divide-border-subtle">
+              <div className="divide-y divide-border">
                 {stats.frequentMistakes.length > 0 ? (
                   stats.frequentMistakes.slice(0, 3).map((mistake) => (
                     <div
@@ -305,7 +306,7 @@ export function GrowthPanel({ isGuest, onGoToAccount }: GrowthPanelProps) {
                       </div>
                       <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-surface-muted">
                         <div
-                          className="h-full rounded-full bg-[#9aa0a6]"
+                          className="h-full rounded-full bg-ink-faint"
                           style={{ width: `${Math.min(100, Math.max(18, mistake.count * 12))}%` }}
                         />
                       </div>
@@ -325,7 +326,7 @@ export function GrowthPanel({ isGuest, onGoToAccount }: GrowthPanelProps) {
         <div>
           <div className="section-title">最近点评</div>
           <Card variant="default" className="p-0">
-            <div className="divide-y divide-border-subtle">
+            <div className="divide-y divide-border">
               {history.length > 0 ? (
                 history.map((item) => (
                   <ReviewRow

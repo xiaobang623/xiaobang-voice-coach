@@ -21,14 +21,14 @@ function SettingsRow({
   return (
     <button type="button" onClick={onClick} className="w-full text-left">
       <Card
-        variant="elevated"
-        className="flex items-center justify-between gap-3 px-5 py-4 transition-colors hover:bg-surface"
+        variant="default"
+        className="flex items-center justify-between gap-3 px-5 py-4 transition-colors hover:border-border-strong"
       >
         <div className="min-w-0">
           <p className="text-sm font-medium text-text">{label}</p>
           {hint ? <p className="mt-0.5 truncate text-xs text-text-muted">{hint}</p> : null}
         </div>
-        <span className="shrink-0 text-accent-muted" aria-hidden="true">
+        <span className="shrink-0 text-text-muted" aria-hidden="true">
           ›
         </span>
       </Card>
@@ -55,7 +55,7 @@ export function SettingsView({ onOpenAccount }: SettingsViewProps) {
       <SettingsRow label="账号" hint={accountHint} onClick={onOpenAccount} />
 
       <div>
-        <p className="mb-3 text-sm font-medium text-text-secondary">练习默认</p>
+        <p className="section-title">练习默认</p>
         {isReady ? (
           <PracticePreferencesPanel
             preferences={{ ...preferences, voiceType: resolvedVoiceType }}

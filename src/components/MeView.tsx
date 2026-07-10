@@ -62,13 +62,15 @@ const ICONS = {
   ),
 };
 
-type MeScreen = "home" | "settings" | "account";
+type MeScreen = "home" | "settings" | "account" | "record";
 type AccountBackTarget = "home" | "settings";
 
 export interface MeViewProps {
   accountDeepLink?: number;
   onAccountExit?: () => void;
   onAccountDeepLinkConsumed?: () => void;
+  recordDeepLink?: number;
+  onRecordDeepLinkConsumed?: () => void;
 }
 
 function SettingsRow({
@@ -84,11 +86,13 @@ function SettingsRow({
   onClick?: () => void;
   isLink?: boolean;
 }) {
-  const Comp = onClick ? "button" : "a";
+  const Comp = onClick ? "button" : "div";
   return (
     <Comp
-      {...(onClick ? { type: "button", onClick } : { href: "#" })}
-      className="flex min-h-11 items-center justify-between gap-4 py-3.5 text-left text-inherit"
+      {...(onClick ? { type: "button", onClick } : {})}
+      className={`flex min-h-11 items-center justify-between gap-4 py-3.5 text-left text-inherit ${
+        onClick ? "cursor-pointer" : "cursor-default"
+      }`}
     >
       <div className="flex min-w-0 items-center gap-3">
         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] bg-surface-muted text-ink-soft">
@@ -98,7 +102,7 @@ function SettingsRow({
       </div>
       <div className="flex items-center gap-2 text-[13px] text-text-muted">
         {value ? <span>{value}</span> : null}
-        {isLink ? (
+        {isLink && onClick ? (
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
             <path d="M9 6l6 6-6 6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
@@ -131,8 +135,14 @@ function CardShell({ children }: { children: ReactNode }) {
   );
 }
 
-export function MeView({ accountDeepLink = 0, onAccountExit, onAccountDeepLinkConsumed }: MeViewProps) {
-  const { isAnonymous, nickname } = useAuth();
+export function MeView({
+  accountDeepLink = 0,
+  onAccountExit,
+  onAccountDeepLinkConsumed,
+  recordDeepLink = 0,
+  onRecordDeepLinkConsumed,
+}: MeViewProps) {
+  const { isAnonymous, nickname, email, signOut } = useAuth();
   const [screen, setScreen] = useState<MeScreen>("home");
   const [accountBackTarget, setAccountBackTarget] = useState<AccountBackTarget>("settings");
 
@@ -151,6 +161,13 @@ export function MeView({ accountDeepLink = 0, onAccountExit, onAccountDeepLinkCo
     }
   }, [accountDeepLink, onAccountDeepLinkConsumed]);
 
+  useEffect(() => {
+    if (recordDeepLink > 0) {
+      setScreen("record");
+      onRecordDeepLinkConsumed?.();
+    }
+  }, [recordDeepLink, onRecordDeepLinkConsumed]);
+
   const handleAccountBack = () => {
     if (onAccountExit) {
       onAccountExit();
@@ -158,6 +175,15 @@ export function MeView({ accountDeepLink = 0, onAccountExit, onAccountDeepLinkCo
     }
     setScreen(accountBackTarget);
   };
+
+  if (screen === "record") {
+    return (
+      <section className="animate-fade-up py-2">
+        <SubPageHeader title="练习记录" onBack={() => setScreen("home")} />
+        <GrowthPanel isGuest={isAnonymous} onGoToAccount={() => openAccount("home")} />
+      </section>
+    );
+  }
 
   if (screen === "settings") {
     return (
@@ -186,74 +212,60 @@ export function MeView({ accountDeepLink = 0, onAccountExit, onAccountDeepLinkCo
   }
 
   return (
-    <section className="animate-fade-up pb-2">
+    <section className="mx-auto w-full max-w-[44rem] animate-fade-up pb-2">
       <header className="app-top-bar mb-7 flex items-start justify-between gap-4 md:mb-9 md:pt-0">
         <div className="min-w-0">
-          <p className="text-xs font-semibold tracking-wide text-text-muted">我的</p>
+          <p className="eyebrow">我的</p>
           <div className="profile-row mt-3 flex items-center gap-3.5">
             <div className="flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-full bg-ink text-bg text-[18px] font-bold">
-              {displayName?.[0]?.toUpperCase() ?? "A"}
+              {displayName?.[0]?.toUpperCase() ?? (isAnonymous ? "游" : "小")}
             </div>
             <div>
               <h2 className="text-[16px] font-semibold tracking-tight text-text">
-                {displayName ?? "Alex"}
+                {displayName ?? (isAnonymous ? "游客" : "小榜同学")}
               </h2>
-              <p className="mt-0.5 text-[12.5px] text-text-muted">alex@example.com</p>
+              <p className="mt-0.5 text-[12.5px] text-text-muted">
+                {email ?? (isAnonymous ? "未登录 · 练习数据不会保存" : "")}
+              </p>
             </div>
           </div>
         </div>
         <button
           type="button"
           onClick={() => setScreen("settings")}
-          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border bg-surface text-text-secondary shadow-card transition-colors active:scale-95 hover:text-text"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border bg-surface text-text-secondary transition-colors active:scale-95 hover:text-text"
           aria-label="偏好与账号"
         >
           <SettingsIcon className="h-5 w-5" />
         </button>
       </header>
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        <div className="space-y-6">
-          <SettingsGroup title="账号">
-            <SettingsRow icon={ICONS.profile} label="个人资料" onClick={() => openAccount("home")} isLink />
-            <div className="border-t border-border-subtle" />
-            <SettingsRow icon={ICONS.plan} label="订阅与升级" value="高级会员" isLink />
-          </SettingsGroup>
+      <div className="space-y-6">
+        <SettingsGroup title="账号">
+          <SettingsRow
+            icon={ICONS.profile}
+            label={isAnonymous ? "登录 / 注册" : "个人资料"}
+            onClick={() => openAccount("home")}
+            isLink
+          />
+        </SettingsGroup>
 
-          <SettingsGroup title="练习">
-            <SettingsRow icon={ICONS.voice} label="语音设置" value="Aria · 美式" isLink onClick={() => setScreen("settings")} />
-            <div className="border-t border-border-subtle" />
-            <SettingsRow icon={ICONS.list} label="练习偏好" isLink onClick={() => setScreen("settings")} />
-            <div className="border-t border-border-subtle" />
-            <SettingsRow icon={ICONS.bell} label="每日提醒" value="晚 8:00" />
-          </SettingsGroup>
-        </div>
+        <SettingsGroup title="练习">
+          <SettingsRow icon={ICONS.list} label="练习记录" value="语言档案 / 历史复盘" isLink onClick={() => setScreen("record")} />
+          <div className="border-t border-border" />
+          <SettingsRow icon={ICONS.voice} label="练习偏好" value="音色 / 语速 / 字幕" isLink onClick={() => setScreen("settings")} />
+        </SettingsGroup>
 
-        <div className="space-y-6">
-          <SettingsGroup title="通用">
-            <SettingsRow icon={ICONS.notif} label="通知" isLink />
-            <div className="border-t border-border-subtle" />
-            <SettingsRow icon={ICONS.privacy} label="隐私与数据" isLink />
-          </SettingsGroup>
-
-          <SettingsGroup title="支持">
-            <SettingsRow icon={ICONS.help} label="帮助中心" isLink />
-            <div className="border-t border-border-subtle" />
-            <SettingsRow icon={ICONS.info} label="关于小榜" value="v2.4.0" />
-          </SettingsGroup>
-
+        {!isAnonymous ? (
           <button
             type="button"
-            className="flex h-14 items-center justify-center rounded-[var(--radius-card)] border border-border bg-surface text-[15px] font-semibold tracking-tight text-[#A85A42] shadow-card transition active:scale-[0.98]"
+            onClick={() => void signOut()}
+            className="flex h-14 w-full items-center justify-center rounded-[16px] border border-border bg-surface text-[15px] font-semibold tracking-tight text-error transition active:scale-[0.98]"
           >
             退出登录
           </button>
-        </div>
+        ) : null}
       </div>
-
-      <section className="mt-8">
-        <GrowthPanel isGuest={isAnonymous} onGoToAccount={() => openAccount("home")} />
-      </section>
     </section>
   );
 }
