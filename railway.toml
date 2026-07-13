@@ -4,7 +4,7 @@ builder = "NIXPACKS"
 buildCommand = "npm install --omit=dev"
 
 [deploy]
-startCommand = "node proxy.js"
+startCommand = "sh -c 'if [ \"$RAILWAY_SERVICE_NAME\" = \"selfhosted-voice\" ]; then node backend/server.js; else node proxy.js; fi'"
 healthcheckPath = "/health"
 healthcheckTimeout = 30
 restartPolicyType = "ON_FAILURE"
