@@ -1,13 +1,15 @@
-import { requireAdmin } from "../_lib/admin-auth.js";
-import { getAdminSupabase } from "../_lib/admin-supabase.js";
+import { requireAdmin } from "../api/_lib/admin-auth.js";
+import { getAdminSupabase } from "../api/_lib/admin-supabase.js";
 import {
   aggregateCostLog,
   buildCostByProvider,
   finalizeProviderRow,
   formatModelDisplayName,
   getCostProviderMeta,
-} from "../_lib/cost-providers.js";
-import { setJsonCors, json } from "../_lib/http.js";
+  getModelRateHint,
+  roundCost,
+} from "../api/_lib/cost-providers.js";
+import { setJsonCors, json } from "../api/_lib/http.js";
 
 function defaultDateFrom() {
   const date = new Date();
@@ -73,7 +75,7 @@ export default async function handler(req, res) {
         api_provider: log.api_provider,
         provider_label: providerMeta.label,
         usage_kind: providerMeta.usage_kind,
-        rate_hint: providerMeta.rate_hint(),
+        rate_hint: getModelRateHint(log.api_provider, log.model_name),
         call_count: 0,
         total_tokens: 0,
         total_duration_seconds: 0,
@@ -137,7 +139,7 @@ export default async function handler(req, res) {
         call_count: row.call_count,
         total_tokens: row.total_tokens,
         total_duration_seconds: row.total_duration_seconds,
-        total_cost: Number(row.total_cost.toFixed(2)),
+        total_cost: roundCost(row.total_cost),
       }))
       .sort((a, b) => b.total_cost - a.total_cost)
       .slice(0, 20);
@@ -145,7 +147,7 @@ export default async function handler(req, res) {
     json(res, 200, {
       success: true,
       data: {
-        total_cost: Number(totalCost.toFixed(2)),
+        total_cost: roundCost(totalCost),
         total_tokens: totalTokens,
         by_provider: byProvider,
         by_model: byModel,

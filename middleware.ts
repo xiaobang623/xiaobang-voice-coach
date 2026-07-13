@@ -1,3 +1,5 @@
+/// <reference types="node" />
+
 import * as jose from "jose";
 
 const PUBLIC_PATHS = new Set(["/admin/login"]);

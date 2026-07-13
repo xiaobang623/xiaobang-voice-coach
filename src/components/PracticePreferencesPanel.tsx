@@ -7,6 +7,7 @@ export interface PracticePreferencesPanelProps {
   preferences: UserPreferences;
   voiceOptions: VoiceOption[];
   showVoicePicker: boolean;
+  globalDefaultVoiceId?: string;
   onVoiceChange: (voiceType: string) => void;
   onSpeedChange: (speedRatio: number) => void;
   onShowSubtitleChange: (showSubtitle: boolean) => void;
@@ -17,6 +18,7 @@ export function PracticePreferencesPanel({
   preferences,
   voiceOptions,
   showVoicePicker,
+  globalDefaultVoiceId,
   onVoiceChange,
   onSpeedChange,
   onShowSubtitleChange,
@@ -28,9 +30,26 @@ export function PracticePreferencesPanel({
         <div>
           <p className="text-sm font-medium text-text">默认音色</p>
           <p className="mt-0.5 text-xs text-text-muted">每次开始练习时使用</p>
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => onVoiceChange("")}
+            className={`mt-3 flex w-full items-center justify-between rounded-2xl border px-3 py-2.5 text-left text-sm transition disabled:cursor-not-allowed disabled:opacity-50 ${
+              preferences.voiceType.trim() === ""
+                ? "border-accent bg-surface-raised text-text shadow-card"
+                : "border-border-subtle bg-surface/60 text-text-secondary hover:border-accent-muted"
+            }`}
+          >
+            <span>
+              <span className="block font-medium">跟随全局默认</span>
+              <span className="mt-0.5 block text-xs text-text-muted">后台模型配置改了，新会话自动跟随</span>
+            </span>
+            <span className="text-xs text-text-muted">推荐</span>
+          </button>
           <div className="mt-3 grid grid-cols-2 gap-2">
             {voiceOptions.map((voice) => {
               const active = preferences.voiceType === voice.id;
+              const isGlobalDefault = globalDefaultVoiceId === voice.id;
               return (
                 <button
                   key={voice.id}
@@ -44,7 +63,12 @@ export function PracticePreferencesPanel({
                   }`}
                 >
                   <VoiceAvatar voiceId={voice.id} label={voice.label} size="sm" />
-                  <span className="font-medium">{voice.label}</span>
+                  <span className="min-w-0">
+                    <span className="block font-medium">{voice.label}</span>
+                    {isGlobalDefault ? (
+                      <span className="mt-0.5 block text-xs text-text-muted">全局默认</span>
+                    ) : null}
+                  </span>
                 </button>
               );
             })}

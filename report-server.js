@@ -28,7 +28,7 @@ function parseEnvLocalFile() {
   return entries;
 }
 
-import { SYSTEM_PROMPT, postProcessReport } from "./report-post-process.js";
+import { SYSTEM_PROMPT, cleanTranscriptForReport, postProcessReport } from "./report-post-process.js";
 import { MEMORY_SYSTEM_PROMPT, postProcessMemory } from "./memory-post-process.js";
 
 const envLocal = parseEnvLocalFile();
@@ -163,6 +163,8 @@ const server = createServer(async (req, res) => {
   }
 
   try {
+    const cleanedTranscript = cleanTranscriptForReport(input.transcript);
+    const transcriptForModel = cleanedTranscript.trim() || input.transcript;
     const taskGoalsBlock =
       Array.isArray(input.taskGoals) && input.taskGoals.length > 0
         ? `\n\nTask goals to judge:\n${input.taskGoals.map((g) => `- [${g.id}] ${g.desc}`).join("\n")}`
@@ -182,7 +184,7 @@ const server = createServer(async (req, res) => {
           { role: "system", content: SYSTEM_PROMPT },
           {
             role: "user",
-            content: `sessionId: ${input.sessionId}\ndurationSeconds: ${input.durationSeconds}${taskGoalsBlock}\n\nTranscript:\n${input.transcript}`,
+            content: `sessionId: ${input.sessionId}\ndurationSeconds: ${input.durationSeconds}${taskGoalsBlock}\n\nTranscript (lightly cleaned for obvious ASR noise):\n${transcriptForModel}`,
           },
         ],
       }),

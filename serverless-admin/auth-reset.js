@@ -1,6 +1,6 @@
-import { createAdminUser } from "../../_lib/admin-auth.js";
-import { getAdminSupabase } from "../../_lib/admin-supabase.js";
-import { setJsonCors, readJsonBody, json } from "../../_lib/http.js";
+import { createAdminUser } from "../api/_lib/admin-auth.js";
+import { getAdminSupabase } from "../api/_lib/admin-supabase.js";
+import { setJsonCors, readJsonBody, json } from "../api/_lib/http.js";
 
 export default async function handler(req, res) {
   setJsonCors(res);

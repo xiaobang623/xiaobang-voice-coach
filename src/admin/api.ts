@@ -180,7 +180,8 @@ export function formatVoiceBackendLabel(backend: AdminSessionRow["voice_backend"
 }
 
 export function formatCurrency(value: number) {
-  return `¥${value.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const digits = Math.abs(value) > 0 && Math.abs(value) < 0.01 ? 6 : 2;
+  return `¥${value.toLocaleString("zh-CN", { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
 }
 
 export function formatTokens(value: number) {

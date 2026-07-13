@@ -1,26 +1,4 @@
-function deepseekCostPer1MTokens() {
-  const raw = process.env.DEEPSEEK_COST_PER_1M_TOKENS;
-  const parsed = raw ? Number(raw) : 2;
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 2;
-}
-
-function doubaoCostPerMinute() {
-  const raw = process.env.DOUBAO_COST_PER_MINUTE;
-  const parsed = raw ? Number(raw) : 0.4;
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0.4;
-}
-
-function doubaoCostPer1MTokens() {
-  const raw = process.env.DOUBAO_COST_PER_1M_TOKENS;
-  const parsed = raw ? Number(raw) : null;
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
-}
-
-function siliconflowCostPer1KChars() {
-  const raw = process.env.SILICONFLOW_COST_PER_1K_CHARS;
-  const parsed = raw ? Number(raw) : 0.05;
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0.05;
-}
+import { getModelCostRate } from "./cost-rates.js";
 
 export const COST_PROVIDER_ORDER = ["doubao", "siliconflow", "deepseek"];
 
@@ -31,12 +9,7 @@ export const COST_PROVIDER_META = {
     short_label: "豆包",
     usage_kind: "duration",
     rate_hint() {
-      const perMinute = doubaoCostPerMinute();
-      const perMillion = doubaoCostPer1MTokens();
-      if (perMillion) {
-        return `¥${perMinute}/分钟 · 或 ¥${perMillion}/百万 Token`;
-      }
-      return `¥${perMinute}/分钟`;
+      return getModelCostRate("doubao", "volc.speech.dialog").rate_hint;
     },
   },
   siliconflow: {
@@ -45,8 +18,7 @@ export const COST_PROVIDER_META = {
     short_label: "硅谷云",
     usage_kind: "characters",
     rate_hint() {
-      const per1k = siliconflowCostPer1KChars();
-      return per1k > 0 ? `TTS ¥${per1k}/千字符 · ASR 免费` : "ASR 免费 · TTS 按量";
+      return `CosyVoice ${getModelCostRate("siliconflow", "siliconflow-cosyvoice").rate_hint} · ASR 免费`;
     },
   },
   deepseek: {
@@ -55,7 +27,7 @@ export const COST_PROVIDER_META = {
     short_label: "DeepSeek",
     usage_kind: "tokens",
     rate_hint() {
-      return `¥${deepseekCostPer1MTokens()}/百万 Token`;
+      return getModelCostRate("deepseek", "deepseek-chat").rate_hint;
     },
   },
 };
@@ -99,6 +71,7 @@ export function formatModelDisplayName(apiProvider, modelName) {
     const map = {
       "siliconflow-sensevoice": "SenseVoice ASR",
       "siliconflow-telespeech": "TeleSpeech ASR",
+      "platform-native-asr": "平台原生 ASR",
       "siliconflow-cosyvoice": "CosyVoice TTS",
       "siliconflow-moss-ttsd": "MOSS-TTSD TTS",
       "FunAudioLLM/SenseVoiceSmall": "SenseVoice ASR",
@@ -109,6 +82,10 @@ export function formatModelDisplayName(apiProvider, modelName) {
     return map[modelName] ?? modelName ?? "SiliconFlow";
   }
   return modelName || "—";
+}
+
+export function getModelRateHint(apiProvider, modelName) {
+  return getModelCostRate(apiProvider, modelName).rate_hint;
 }
 
 export function createEmptyProviderRow(apiProvider) {
@@ -153,8 +130,16 @@ export function aggregateCostLog(row, log) {
 export function finalizeProviderRow(row) {
   return {
     ...row,
-    total_cost: Number(row.total_cost.toFixed(2)),
+    total_cost: roundCost(row.total_cost),
   };
+}
+
+export function roundCost(value) {
+  const amount = Number(value ?? 0);
+  if (!Number.isFinite(amount)) {
+    return 0;
+  }
+  return Number(amount.toFixed(Math.abs(amount) < 1 ? 6 : 2));
 }
 
 export function buildCostByProvider(logs) {

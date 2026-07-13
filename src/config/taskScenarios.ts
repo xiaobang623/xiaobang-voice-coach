@@ -8,7 +8,8 @@ export const TASK_SCENARIOS: TaskScenario[] = [
     category: "life",
     title: "点一杯咖啡",
     description: "在咖啡店完成点单全流程",
-    openingHint: "小榜会扮演咖啡店店员，等你开口点单",
+    openingHint: "小榜会先扮演咖啡店店员招呼你，你用英文完成点单",
+    greeting: "Hi there, welcome in! What would you like to order today?",
     roleSetup:
       "You are a friendly café barista. The user is a customer who just walked up to order a drink. Greet them naturally and stay in character as a barista throughout.",
     goals: [
@@ -38,7 +39,8 @@ export const TASK_SCENARIOS: TaskScenario[] = [
     category: "work",
     title: "AI PM 英文面试",
     description: "模拟求职面试，练 STAR 和追问应对",
-    openingHint: "小榜会扮演面试官，先让你做个自我介绍",
+    openingHint: "小榜会先扮演面试官开场，你用英文做自我介绍",
+    greeting: "Hi, nice to meet you. Could you start by introducing yourself?",
     roleSetup:
       "You are an interviewer for an AI Product Manager role at a tech company. Conduct a realistic job interview in English. Stay in character as the interviewer throughout.",
     goals: [

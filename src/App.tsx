@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppNavBar } from "./components/AppNavBar";
 import { BottomTabBar, type MainTab } from "./components/BottomTabBar";
 import { MeView } from "./components/MeView";
+import { ReportScreen } from "./components/ReportScreen";
 import { TopicSelector, type PracticeInsight } from "./components/TopicSelector";
 import { VoiceSession } from "./components/VoiceSession";
 import {
@@ -32,12 +33,12 @@ import {
 } from "./config/session";
 import type { GrowthPageData, MemorySummary, ReportJSON, SessionSettings, TaskScenario } from "./types";
 
-type PracticeScreen = "topics" | "chat";
+type PracticeScreen = "topics" | "chat" | "report";
 
 function App() {
   const { isConfigured, isAnonymous, userId } = useAuth();
   const { preferences, setVoiceType, setSpeedRatio, setShowSubtitle } = useUserPreferences();
-  const { voiceProfile, isLoading: voiceProfileLoading } = useVoiceProfile();
+  const { voiceProfile } = useVoiceProfile();
   const [mainTab, setMainTab] = useState<MainTab>("practice");
   const [practiceScreen, setPracticeScreen] = useState<PracticeScreen>("topics");
   const voice = useVoiceSession();
@@ -49,6 +50,8 @@ function App() {
   const [homeInsightLoading, setHomeInsightLoading] = useState(false);
   const sessionIdRef = useRef(crypto.randomUUID());
   const doubaoLoggedSessionRef = useRef<string | null>(null);
+  // 复盘生成的“代际”标记：用户中途退出后，旧一轮的异步结果不再回写 UI 状态
+  const reportRunRef = useRef(0);
 
   const [topicId, setTopicId] = useState<string | null>(null);
   const [accountDeepLink, setAccountDeepLink] = useState(0);
@@ -56,6 +59,7 @@ function App() {
   const [accountReturnTab, setAccountReturnTab] = useState<MainTab | null>(null);
 
   const inChat = practiceScreen === "chat";
+  const inReport = practiceScreen === "report";
 
   useEffect(() => {
     if (mainTab !== "me" && accountReturnTab) {
@@ -126,25 +130,6 @@ function App() {
     () => pickVoiceType(preferences.voiceType, voiceProfile),
     [preferences.voiceType, voiceProfile],
   );
-
-  useEffect(() => {
-    if (voiceProfileLoading) {
-      return;
-    }
-    const isSiliconFlow = voiceProfile.provider.startsWith("siliconflow-");
-    if (isSiliconFlow && preferences.voiceType === "benjamin") {
-      setVoiceType("diana");
-      return;
-    }
-    // anna 曾是 SiliconFlow 默认音色；迁移到新的默认 diana
-    if (isSiliconFlow && preferences.voiceType === "anna") {
-      setVoiceType("diana");
-      return;
-    }
-    if (resolvedVoiceType !== preferences.voiceType) {
-      setVoiceType(resolvedVoiceType);
-    }
-  }, [voiceProfileLoading, voiceProfile.provider, preferences.voiceType, resolvedVoiceType, setVoiceType]);
 
   const sessionSettings = useMemo<SessionSettings>(() => {
     const taskScenario = topicId ? findTaskScenario(topicId) : undefined;
@@ -234,10 +219,12 @@ function App() {
   }, []);
 
   const handleExitChat = useCallback(() => {
+    reportRunRef.current += 1;
     void logVoiceUsage();
     voice.clearConversation();
     setReport(null);
     setReportError(null);
+    setReportLoading(false);
     sessionIdRef.current = crypto.randomUUID();
     doubaoLoggedSessionRef.current = null;
     setPracticeScreen("topics");
@@ -254,24 +241,33 @@ function App() {
       return;
     }
 
+    // 复盘报告切到独立页面展示，不再挤在对话流里
+    // 固定这一轮的 sessionId 和代际号：用户中途退出（sessionId 会重置）也不影响后台保存和 UI 状态
+    const sessionId = sessionIdRef.current;
+    const runId = ++reportRunRef.current;
+    const isCurrentRun = () => reportRunRef.current === runId;
+
+    setPracticeScreen("report");
     setReportLoading(true);
     setReportError(null);
 
     try {
       const taskScenario = topicId ? findTaskScenario(topicId) : undefined;
       const nextReport = await generateReport({
-        sessionId: sessionIdRef.current,
+        sessionId,
         transcript,
         durationSeconds: durationSeconds || 1,
         userId: usageActor.userId ?? undefined,
         guestId: usageActor.guestId ?? undefined,
         taskGoals: taskScenario?.goals.map((g) => ({ id: g.id, desc: g.desc })),
       });
-      setReport(nextReport);
+      if (isCurrentRun()) {
+        setReport(nextReport);
+      }
 
       if (!isAnonymous) {
         await persistSessionReport({
-          sessionId: sessionIdRef.current,
+          sessionId,
           topic: topicId,
           transcript,
           durationSeconds,
@@ -293,7 +289,7 @@ function App() {
             previousSummary: userMemory,
             userId: usageActor.userId ?? undefined,
             guestId: usageActor.guestId ?? undefined,
-            sessionId: sessionIdRef.current,
+            sessionId,
           });
           await upsertUserMemory(nextMemory);
           setUserMemory(nextMemory);
@@ -305,7 +301,7 @@ function App() {
         }
       } else if (usageActor.guestId) {
         await persistGuestSessionReport({
-          sessionId: sessionIdRef.current,
+          sessionId,
           guestId: usageActor.guestId,
           topic: topicId,
           transcript,
@@ -314,9 +310,13 @@ function App() {
         });
       }
     } catch (error) {
-      setReportError(error instanceof Error ? error.message : String(error));
+      if (isCurrentRun()) {
+        setReportError(error instanceof Error ? error.message : String(error));
+      }
     } finally {
-      setReportLoading(false);
+      if (isCurrentRun()) {
+        setReportLoading(false);
+      }
     }
   }, [voice, topicId, isAnonymous, userMemory, usageActor, userId, getVoiceDurationSeconds, logVoiceUsage]);
 
@@ -333,11 +333,19 @@ function App() {
   );
 
   const handleMainTabChange = useCallback((tab: MainTab) => {
-    if (inChat) {
+    if (inChat || inReport) {
       return;
     }
     setMainTab(tab);
-  }, [inChat]);
+  }, [inChat, inReport]);
+
+  const handleBackToChat = useCallback(() => {
+    setPracticeScreen("chat");
+  }, []);
+
+  const handleViewReport = useCallback(() => {
+    setPracticeScreen("report");
+  }, []);
 
   const handleGoToRecord = useCallback(() => {
     setMainTab("me");
@@ -368,14 +376,44 @@ function App() {
   }, []);
 
   return (
-    <div className={`app-shell flex min-h-dvh flex-col ${inChat ? "bg-bg-canvas text-ink-on-canvas" : "bg-bg text-text"}`}>
-      {!inChat ? (
+    <div className={`app-shell flex ${inChat ? "h-dvh overflow-hidden" : "min-h-dvh"} flex-col ${
+      inChat ? "bg-bg-canvas text-ink-on-canvas" : "bg-bg text-text"
+    }`}>
+      {!inChat && !inReport ? (
         <AppNavBar
           active={mainTab}
           onChange={handleMainTabChange}
           showLogin={isConfigured && isAnonymous}
           onLogin={handleGoToAccount}
         />
+      ) : null}
+
+      {inReport ? (
+        <header className="app-top-bar sticky top-0 z-30 border-b border-border-subtle bg-bg/90 backdrop-blur-xl">
+          <div className="page-shell page-shell--flow flex items-center gap-3 py-3">
+            {report ? (
+              <button
+                type="button"
+                onClick={handleBackToChat}
+                className="flex shrink-0 items-center gap-0.5 rounded-full px-2 py-1.5 text-sm text-text-secondary transition-colors hover:bg-bg-warm hover:text-text active:scale-95"
+              >
+                ← 返回对话
+              </button>
+            ) : (
+              <span className="w-20 shrink-0" aria-hidden="true" />
+            )}
+            <p className="min-w-0 flex-1 truncate text-center text-sm font-medium text-text">
+              复盘报告
+            </p>
+            <button
+              type="button"
+              onClick={handleExitChat}
+              className="w-14 shrink-0 rounded-full px-2 py-1.5 text-sm text-text-secondary transition-colors hover:bg-bg-warm hover:text-text active:scale-95"
+            >
+              {report ? "完成" : "退出"}
+            </button>
+          </div>
+        </header>
       ) : null}
 
       {inChat ? (
@@ -399,7 +437,7 @@ function App() {
       <main
         className={`page-shell flex flex-col ${
           inChat
-            ? "min-h-0 flex-1 pb-2 pt-0 md:py-4"
+            ? "h-full min-h-0 flex-1 overflow-hidden pb-2 pt-0 md:py-4"
             : "pb-[calc(5.5rem+env(safe-area-inset-bottom))] pt-0 md:pb-8 md:pt-2"
         }`}
       >
@@ -436,9 +474,22 @@ function App() {
             report={report}
             reportLoading={reportLoading}
             reportError={reportError}
+            onEndAndReport={() => void handleEndAndReport()}
+            onViewReport={handleViewReport}
+          />
+        ) : null}
+
+        {mainTab === "practice" && practiceScreen === "report" ? (
+          <ReportScreen
+            report={report}
+            loading={reportLoading}
+            error={reportError}
             wordCount={speechStats.wordCount}
             sentenceCount={speechStats.sentenceCount}
-            onEndAndReport={() => void handleEndAndReport()}
+            taskGoals={activeTask?.goals}
+            savedToHistory={isConfigured && !isAnonymous}
+            onBackToChat={handleBackToChat}
+            onExit={handleExitChat}
           />
         ) : null}
 
@@ -453,7 +504,7 @@ function App() {
         ) : null}
       </main>
 
-      {!inChat ? <BottomTabBar active={mainTab} onChange={handleMainTabChange} /> : null}
+      {!inChat && !inReport ? <BottomTabBar active={mainTab} onChange={handleMainTabChange} /> : null}
     </div>
   );
 }

@@ -1,0 +1,27 @@
+# Local-only / sensitive
+.env.local
+.env.*.local
+.vercel/
+
+# Dependency and build artifacts (Vercel installs/builds remotely)
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Tool/editor metadata
+.cursor/
+.claude/
+.DS_Store
+
+# Local voice experiment artifacts (large, not needed for Vercel frontend/serverless deploy)
+CosyVoice/
+pretrained_models/
+logs/
+*.log
+
+# Local Python voice experiment helpers (not used by Vercel serverless runtime)
+setup_cosyvoice.sh
+start_cosyvoice.sh
+start_whisper.sh
+requirements_cosyvoice*.txt
+requirements_whisper.txt

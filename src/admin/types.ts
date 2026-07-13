@@ -92,9 +92,12 @@ export interface Pagination {
 export type VoiceBackend = "doubao" | "selfhosted";
 
 export type AsrProvider =
+  | "platform-native-asr"
   | "local-whisper"
   | "siliconflow-sensevoice"
   | "siliconflow-telespeech";
+
+export type PlatformNativeAsrLocale = "en-US" | "zh-CN";
 
 export type TtsProvider =
   | "local-cosyvoice"
@@ -107,6 +110,7 @@ export interface VoiceModelConfigPayload {
   };
   selfhosted?: {
     asrProvider?: AsrProvider;
+    platformNativeAsrLocale?: PlatformNativeAsrLocale;
     ttsProvider?: TtsProvider;
     siliconflowTtsVoice?: string;
     whisperModel?: string;
@@ -133,6 +137,7 @@ export interface ResolvedVoiceConfigPreview {
   modelOverrides: {
     doubaoDialogModel?: string;
     asrProvider?: AsrProvider;
+    platformNativeAsrLocale?: PlatformNativeAsrLocale;
     ttsProvider?: TtsProvider;
     siliconflowTtsVoice?: string;
     whisperModel?: string;

@@ -27,6 +27,7 @@ export const DEFAULT_VOICE_CONFIG = {
   },
   selfhosted: {
     asrProvider: "siliconflow-sensevoice",
+    platformNativeAsrLocale: "en-US",
     ttsProvider: "local-cosyvoice",
     siliconflowTtsVoice: "diana",
     whisperModel: "base",
@@ -153,6 +154,7 @@ export function toModelOverrides(config) {
   return {
     doubaoDialogModel: config.doubao?.dialogModel,
     asrProvider: config.selfhosted?.asrProvider,
+    platformNativeAsrLocale: config.selfhosted?.platformNativeAsrLocale,
     ttsProvider: config.selfhosted?.ttsProvider,
     siliconflowTtsVoice: config.selfhosted?.siliconflowTtsVoice,
     whisperModel: config.selfhosted?.whisperModel,
@@ -282,6 +284,7 @@ export function configFromModelOverrides(overrides) {
   const selfhosted = {};
   for (const key of [
     "asrProvider",
+    "platformNativeAsrLocale",
     "ttsProvider",
     "siliconflowTtsVoice",
     "whisperModel",

@@ -33,6 +33,7 @@ export interface VoiceBackendConfigPayload {
   doubao?: { dialogModel?: string };
   selfhosted?: {
     asrProvider?: string;
+    platformNativeAsrLocale?: string;
     ttsProvider?: string;
     siliconflowTtsVoice?: string;
     whisperModel?: string;

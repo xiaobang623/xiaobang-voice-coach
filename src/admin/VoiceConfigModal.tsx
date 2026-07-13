@@ -90,10 +90,15 @@ export function VoiceConfigModal({
 
         const eff = resolved.effective;
         const sh = eff.config.selfhosted;
+        const asrLabel = sh?.asrProvider === "platform-native-asr" ? "平台原生 ASR" : (sh?.asrProvider ?? "—");
+        const asrSuffix =
+          sh?.asrProvider === "platform-native-asr"
+            ? `(${sh.platformNativeAsrLocale === "zh-CN" ? "中文" : "英文"})`
+            : "";
         setEffectivePreview(
           eff.backend === "doubao"
             ? `${eff.backend} · 豆包 ${eff.config.doubao?.dialogModel ?? "—"}`
-            : `${eff.backend} · ASR ${sh?.asrProvider ?? "—"} · TTS ${sh?.ttsProvider ?? "—"} · DeepSeek ${sh?.deepseekModel ?? "—"}`,
+            : `${eff.backend} · ASR ${asrLabel}${asrSuffix} · TTS ${sh?.ttsProvider ?? "—"} · DeepSeek ${sh?.deepseekModel ?? "—"}`,
         );
       } catch (err) {
         if (!cancelled) {

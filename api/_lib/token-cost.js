@@ -1,66 +1,79 @@
 import { getAdminSupabase } from "./admin-supabase.js";
-
-function deepseekCostPer1MTokens() {
-  const raw = process.env.DEEPSEEK_COST_PER_1M_TOKENS;
-  const parsed = raw ? Number(raw) : 2;
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 2;
-}
-
-function doubaoCostPerMinute() {
-  const raw = process.env.DOUBAO_COST_PER_MINUTE;
-  const parsed = raw ? Number(raw) : 0.4;
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0.4;
-}
-
-function doubaoCostPer1MTokens() {
-  const raw = process.env.DOUBAO_COST_PER_1M_TOKENS;
-  const parsed = raw ? Number(raw) : null;
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
-}
-
-function siliconflowCostPer1KChars() {
-  const raw = process.env.SILICONFLOW_COST_PER_1K_CHARS;
-  const parsed = raw ? Number(raw) : 0.05;
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0.05;
-}
+import { calculateCostForUsage, getModelCostRate } from "./cost-rates.js";
 
 export function calculateSiliconFlowCost(charactersUsed) {
-  const per1k = siliconflowCostPer1KChars();
-  if (!charactersUsed || charactersUsed <= 0 || per1k <= 0) {
+  const cost = calculateCostForUsage({
+    apiProvider: "siliconflow",
+    modelName: "siliconflow-cosyvoice",
+    tokensUsed: charactersUsed,
+  });
+  if (!charactersUsed || charactersUsed <= 0 || cost <= 0) {
     return 0;
   }
-  return Number(((charactersUsed / 1000) * per1k).toFixed(6));
+  return cost;
 }
 
 export function calculateDoubaoTokenCost(tokensUsed) {
-  const perMillion = doubaoCostPer1MTokens();
-  if (!perMillion) {
+  const rate = getModelCostRate("doubao", "volc.speech.dialog");
+  if (!rate.per1MTokens) {
     return null;
   }
-  return Number(((tokensUsed / 1_000_000) * perMillion).toFixed(6));
+  return calculateCostForUsage({
+    apiProvider: "doubao",
+    modelName: "volc.speech.dialog",
+    tokensUsed,
+  });
 }
 
 export function calculateDoubaoCostFromUsage({ tokensUsed = 0, durationSeconds = null }) {
-  if (tokensUsed > 0) {
-    const tokenCost = calculateDoubaoTokenCost(tokensUsed);
-    if (tokenCost != null) {
-      return tokenCost;
-    }
-  }
-  if (durationSeconds && durationSeconds > 0) {
-    return calculateDoubaoCost(durationSeconds);
-  }
-  return 0;
+  return calculateCostForUsage({
+    apiProvider: "doubao",
+    modelName: "volc.speech.dialog",
+    tokensUsed,
+    durationSeconds,
+  });
 }
 
 export function calculateDeepseekCost(tokensUsed) {
-  const perMillion = deepseekCostPer1MTokens();
-  return Number(((tokensUsed / 1_000_000) * perMillion).toFixed(6));
+  return calculateCostForUsage({
+    apiProvider: "deepseek",
+    modelName: "deepseek-chat",
+    tokensUsed,
+  });
 }
 
 export function calculateDoubaoCost(durationSeconds) {
-  const minutes = durationSeconds / 60;
-  return Number((minutes * doubaoCostPerMinute()).toFixed(6));
+  return calculateCostForUsage({
+    apiProvider: "doubao",
+    modelName: "volc.speech.dialog",
+    durationSeconds,
+  });
+}
+
+async function updateExistingDoubaoUsageIfMorePrecise(supabase, existing, row, incomingTokens) {
+  const existingTokens = Number(existing.tokens_used ?? 0);
+  const existingDuration = Number(existing.duration_seconds ?? 0);
+  const existingLooksDurationOnly =
+    existingDuration > 0 && (!existingTokens || existingTokens === Math.round(existingDuration));
+
+  // Frontend logs a duration fallback before the proxy receives the final Doubao
+  // usage frame. When the proxy later sends real token usage, replace the row so
+  // the admin dashboard shows the more precise model usage instead of dropping it.
+  if (incomingTokens > 0 && existingLooksDurationOnly) {
+    const { error } = await supabase
+      .from("token_logs")
+      .update({
+        model_name: row.model_name,
+        tokens_used: row.tokens_used,
+        duration_seconds: row.duration_seconds,
+        cost: row.cost,
+      })
+      .eq("id", existing.id);
+
+    if (error) {
+      console.warn("[token_logs] failed to update doubao usage:", error.message);
+    }
+  }
 }
 
 export async function logTokenUsage({
@@ -95,28 +108,42 @@ export async function logTokenUsage({
   try {
     const supabase = getAdminSupabase();
 
-    if (sessionId) {
+    if (sessionId && apiProvider === "doubao") {
       const { data: existing } = await supabase
         .from("token_logs")
-        .select("id")
+        .select("id, tokens_used, duration_seconds, cost")
         .eq("session_id", sessionId)
         .eq("api_provider", apiProvider)
         .maybeSingle();
       if (existing) {
+        const cost = calculateCostForUsage({
+          apiProvider,
+          modelName,
+          tokensUsed,
+          durationSeconds,
+        });
+        const row = {
+          model_name: modelName,
+          tokens_used: tokensUsed > 0 ? tokensUsed : Math.max(1, Math.round(durationSeconds ?? 0)),
+          duration_seconds: durationSeconds,
+          cost,
+        };
+        await updateExistingDoubaoUsageIfMorePrecise(supabase, existing, row, tokensUsed);
         return;
       }
     }
 
-    let cost = 0;
+    let cost = calculateCostForUsage({
+      apiProvider,
+      modelName,
+      tokensUsed,
+      durationSeconds,
+    });
     let storedTokens = tokensUsed;
-    if (apiProvider === "deepseek") {
-      cost = calculateDeepseekCost(tokensUsed);
-    } else if (apiProvider === "doubao") {
-      cost = calculateDoubaoCostFromUsage({ tokensUsed, durationSeconds });
+    if (apiProvider === "doubao") {
       storedTokens =
         tokensUsed > 0 ? tokensUsed : Math.max(1, Math.round(durationSeconds ?? 0));
     } else if (apiProvider === "siliconflow") {
-      cost = calculateSiliconFlowCost(tokensUsed);
       storedTokens = Math.max(1, Math.round(tokensUsed));
     }
 

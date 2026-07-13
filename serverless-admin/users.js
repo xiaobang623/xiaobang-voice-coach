@@ -1,6 +1,6 @@
-import { requireAdmin } from "../_lib/admin-auth.js";
-import { getAdminSupabase } from "../_lib/admin-supabase.js";
-import { setJsonCors, json } from "../_lib/http.js";
+import { requireAdmin } from "../api/_lib/admin-auth.js";
+import { getAdminSupabase } from "../api/_lib/admin-supabase.js";
+import { setJsonCors, json } from "../api/_lib/http.js";
 
 function parseIntParam(value, fallback) {
   const parsed = Number(value);

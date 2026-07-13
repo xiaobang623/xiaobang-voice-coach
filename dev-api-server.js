@@ -41,6 +41,17 @@ if (missing.length > 0) {
   console.warn(`[dev-api] missing env: ${missing.join(", ")} — add to .env.local and restart`);
 }
 
+function rewriteVercelRoutes(url) {
+  // Mirror vercel.json locally:
+  //   /api/admin/(.*) -> /api/admin.js?path=$1
+  // Without this, Vite proxy sends /api/admin/auth/login to this dev server,
+  // and a file lookup for api/admin/auth/login.js fails.
+  if (url.pathname.startsWith("/api/admin/")) {
+    url.searchParams.set("path", url.pathname.slice("/api/admin/".length));
+    url.pathname = "/api/admin";
+  }
+}
+
 function resolveHandlerPath(pathname) {
   if (!pathname.startsWith("/api/")) {
     return null;
@@ -104,7 +115,7 @@ function createVercelRequest(nodeReq, url, body) {
 
   return {
     method: nodeReq.method,
-    url: nodeReq.url,
+    url: `${url.pathname}${url.search}`,
     headers: nodeReq.headers,
     query,
     body,
@@ -115,6 +126,7 @@ const server = createServer((nodeReq, nodeRes) => {
   void (async () => {
     try {
       const url = new URL(nodeReq.url ?? "/", `http://${nodeReq.headers.host || "localhost"}`);
+      rewriteVercelRoutes(url);
       const handlerPath = resolveHandlerPath(url.pathname);
 
       if (!handlerPath) {

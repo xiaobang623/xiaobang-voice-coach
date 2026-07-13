@@ -1,5 +1,12 @@
 import { useState } from "react";
-import type { Correction, CorrectionType, ReportJSON, TaskGoal, TaskGoalStatus } from "../types";
+import type {
+  Correction,
+  CorrectionType,
+  ReportGrowth,
+  ReportJSON,
+  TaskGoal,
+  TaskGoalStatus,
+} from "../types";
 import { getCefrLevel, getLevelInfo } from "../config/levels";
 import { Badge } from "./ui/Badge";
 import { Card } from "./ui/Card";
@@ -228,6 +235,86 @@ function TodayFocusCard({ correction }: { correction: Correction }) {
   );
 }
 
+function GrowthSection({ growth }: { growth: ReportGrowth }) {
+  const hasAny =
+    growth.sayBetter.length > 0 || growth.newExpressions.length > 0 || growth.talkMore.length > 0;
+  if (!hasAny) {
+    return null;
+  }
+
+  return (
+    <div className="space-y-8">
+      <div>
+        <p className="eyebrow">口语提升包</p>
+        <p className="mt-1 text-xs text-text-muted">
+          {growth.topic
+            ? `围绕「${growth.topic}」，这些内容能让你下次说得更多、更好`
+            : "这些内容能让你下次说得更多、更好"}
+        </p>
+      </div>
+
+      {growth.sayBetter.length > 0 ? (
+        <div>
+          <h3 className="text-[13px] font-semibold text-text-secondary">下次可以这样说</h3>
+          <p className="mt-0.5 text-xs text-text-muted">你说得没错，但可以更丰富——试着升级这些句子</p>
+          <ul className="mt-4 space-y-3">
+            {growth.sayBetter.map((item, index) => (
+              <li key={`say-better-${index}`}>
+                <Card variant="default" className="p-4">
+                  <p className="text-[13.5px] text-text-muted">你说的：{item.original}</p>
+                  <p className="mt-1.5 text-[15px] font-semibold leading-snug text-accent-teal">
+                    {item.upgraded}
+                  </p>
+                  {item.note ? (
+                    <p className="mt-2 text-[13px] leading-[1.6] text-text-secondary">{item.note}</p>
+                  ) : null}
+                </Card>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {growth.newExpressions.length > 0 ? (
+        <div>
+          <h3 className="text-[13px] font-semibold text-text-secondary">值得记下的新表达</h3>
+          <p className="mt-0.5 text-xs text-text-muted">跟这次话题直接相关的口语词块和句型</p>
+          <ul className="mt-4 space-y-3">
+            {growth.newExpressions.map((item, index) => (
+              <li key={`new-expression-${index}`}>
+                <Card variant="default" className="p-4">
+                  <p className="text-[15px] font-semibold leading-snug text-text">{item.phrase}</p>
+                  <p className="mt-1.5 text-[13px] leading-[1.6] text-text-secondary">{item.meaning}</p>
+                  {item.example ? (
+                    <p className="mt-2 text-[13px] leading-[1.6] text-text-muted">例：{item.example}</p>
+                  ) : null}
+                </Card>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {growth.talkMore.length > 0 ? (
+        <div>
+          <h3 className="text-[13px] font-semibold text-text-secondary">这个话题还能聊什么</h3>
+          <p className="mt-0.5 text-xs text-text-muted">下次可以展开的角度，起手句直接照着说就行</p>
+          <ul className="mt-4 space-y-3">
+            {growth.talkMore.map((item, index) => (
+              <li key={`talk-more-${index}`}>
+                <Card variant="default" className="p-4">
+                  <p className="text-[13.5px] font-medium text-text">{item.angle}</p>
+                  <p className="mt-1.5 text-[14px] leading-snug text-accent-teal">“{item.starter}”</p>
+                </Card>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function ReportView({ report, wordCount, sentenceCount, taskGoals }: ReportViewProps) {
   if (!report) {
     return null;
@@ -279,6 +366,8 @@ export function ReportView({ report, wordCount, sentenceCount, taskGoals }: Repo
       ) : null}
 
       {topCorrection ? <TodayFocusCard correction={topCorrection} /> : null}
+
+      {report.growth ? <GrowthSection growth={report.growth} /> : null}
 
       {grouped.length > 0 ? (
         <div className="space-y-8">

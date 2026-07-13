@@ -1,7 +1,7 @@
 import { PracticePreferencesPanel } from "./PracticePreferencesPanel";
 import { Card } from "./ui/Card";
 import { useVoiceProfile } from "../hooks/useVoiceProfile";
-import { pickVoiceType, showsVoicePicker } from "../config/voices";
+import { showsVoicePicker } from "../config/voices";
 import { useAuth } from "../hooks/useAuth";
 import { useUserPreferences } from "../hooks/useUserPreferences";
 
@@ -39,9 +39,7 @@ function SettingsRow({
 export function SettingsView({ onOpenAccount }: SettingsViewProps) {
   const { isAnonymous, nickname, email } = useAuth();
   const { preferences, isReady, setVoiceType, setSpeedRatio, setShowSubtitle } = useUserPreferences();
-  const { voiceProfile } = useVoiceProfile();
-  const resolvedVoiceType = pickVoiceType(preferences.voiceType, voiceProfile);
-
+  const { voiceProfile, isLoading: voiceProfileLoading } = useVoiceProfile();
   const displayName = nickname?.trim();
 
   const accountHint = isAnonymous
@@ -56,17 +54,20 @@ export function SettingsView({ onOpenAccount }: SettingsViewProps) {
 
       <div>
         <p className="section-title">练习默认</p>
-        {isReady ? (
+        {isReady && !voiceProfileLoading ? (
           <PracticePreferencesPanel
-            preferences={{ ...preferences, voiceType: resolvedVoiceType }}
+            preferences={preferences}
             voiceOptions={voiceProfile.voices}
             showVoicePicker={showsVoicePicker(voiceProfile)}
+            globalDefaultVoiceId={voiceProfile.defaultVoice}
             onVoiceChange={setVoiceType}
             onSpeedChange={setSpeedRatio}
             onShowSubtitleChange={setShowSubtitle}
           />
         ) : (
-          <p className="text-sm text-text-muted">加载中…</p>
+          <p className="text-sm text-text-muted">
+            {voiceProfileLoading ? "正在获取后台音色配置…" : "加载中…"}
+          </p>
         )}
         {!isAnonymous ? (
           <p className="mt-3 text-xs leading-relaxed text-text-muted">

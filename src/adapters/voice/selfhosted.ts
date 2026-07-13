@@ -123,6 +123,19 @@ export class SelfHostedVoiceAdapter implements VoiceAdapter {
     }
   }
 
+  amendTextQuery(text: string): void {
+    const content = text.trim();
+    if (!content || !this.socket || this.socket.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    try {
+      this.socket.send(JSON.stringify({ type: "text-query", text: content, amend: true }));
+    } catch (error) {
+      this.emitError(error);
+    }
+  }
+
   sayHello(text: string): void {
     const content = text.trim();
     if (!content || !this.socket || this.socket.readyState !== WebSocket.OPEN) {
@@ -293,7 +306,10 @@ export class SelfHostedVoiceAdapter implements VoiceAdapter {
     }
 
     if (payload.type === "error" && typeof payload.message === "string") {
-      throw new Error(payload.message);
+      this.emit("realtime-hint", {
+        message: payload.message,
+        level: "warning",
+      });
     }
   }
 

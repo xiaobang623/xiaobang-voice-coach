@@ -5,8 +5,8 @@ import {
   setAuthCookie,
   signAdminToken,
   verifyPassword,
-} from "../../_lib/admin-auth.js";
-import { setJsonCors, readJsonBody, json } from "../../_lib/http.js";
+} from "../api/_lib/admin-auth.js";
+import { setJsonCors, readJsonBody, json } from "../api/_lib/http.js";
 
 export default async function handler(req, res) {
   setJsonCors(res);

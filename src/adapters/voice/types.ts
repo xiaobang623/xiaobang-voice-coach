@@ -1,6 +1,7 @@
 export interface VoiceModelOverrides {
   doubaoDialogModel?: string;
   asrProvider?: string;
+  platformNativeAsrLocale?: string;
   ttsProvider?: string;
   siliconflowTtsVoice?: string;
   whisperModel?: string;
@@ -48,6 +49,11 @@ export interface VoiceAdapter {
   endAsr(source?: "silence" | "stop"): void;
   /** Send a text query (ChatTextQuery / event 501) to trigger a spoken reply. */
   sendTextQuery(text: string): void;
+  /**
+   * 反悔合并：用完整合并句替换上一轮 text query——后端撤销上一轮问答
+   * （含正在生成的回复），对完整句子重新回答。仅自建后端支持。
+   */
+  amendTextQuery?(text: string): void;
   /** Read aloud via SayHello (event 300) when text query is unavailable. */
   sayHello(text: string): void;
   on(

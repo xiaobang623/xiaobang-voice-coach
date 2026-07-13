@@ -9,13 +9,6 @@ import type { CefrLevel } from "../config/levels";
 import type { UserLevel } from "../types";
 import { Card } from "./ui/Card";
 
-function formatLevelList(levels: typeof LEVEL_SYSTEM): string {
-  if (levels.length === 0) {
-    return "没有更前面的等级";
-  }
-  return levels.map((level) => `${level.code} ${level.shortLabel}`).join("、");
-}
-
 export function LevelPath({
   level,
   className = "",
@@ -78,7 +71,7 @@ export function LevelSystemCard({
 }) {
   const [expanded, setExpanded] = useState(defaultExpanded);
   const level = getCefrLevel(userLevel);
-  const { current, previous, next } = getLevelContext(level);
+  const { current, next } = getLevelContext(level);
   const nextLevel = next[0] ?? null;
 
   return (
@@ -102,17 +95,6 @@ export function LevelSystemCard({
       </div>
 
       <LevelPath level={level} className="mt-5" />
-
-      <div className="mt-5 grid gap-2 text-[12.5px] leading-[1.55] sm:grid-cols-2">
-        <div className="rounded-[14px] bg-surface-muted px-3.5 py-3 text-text-secondary">
-          <span className="font-semibold text-text">之前：</span>
-          {previous.length > 0 ? formatLevelList(previous) : "已经是第一个等级"}
-        </div>
-        <div className="rounded-[14px] bg-surface-muted px-3.5 py-3 text-text-secondary">
-          <span className="font-semibold text-text">之后：</span>
-          {next.length > 0 ? formatLevelList(next) : "已经到达最高等级"}
-        </div>
-      </div>
 
       <button
         type="button"

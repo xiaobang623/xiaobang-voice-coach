@@ -1,6 +1,7 @@
 import type {
   AsrProvider,
   ModelInstancesData,
+  PlatformNativeAsrLocale,
   TtsProvider,
   VoiceBackend,
   VoiceModelConfigPayload,
@@ -10,6 +11,7 @@ export interface VoiceConfigFormState {
   backend: VoiceBackend;
   doubaoDialogModel: string;
   asrProvider: AsrProvider;
+  platformNativeAsrLocale: PlatformNativeAsrLocale;
   ttsProvider: TtsProvider;
   siliconflowTtsVoice: string;
   whisperModel: string;
@@ -21,6 +23,7 @@ export const DEFAULT_FORM_STATE: VoiceConfigFormState = {
   backend: "doubao",
   doubaoDialogModel: "1.2.1.1",
   asrProvider: "siliconflow-sensevoice",
+  platformNativeAsrLocale: "en-US",
   ttsProvider: "local-cosyvoice",
   siliconflowTtsVoice: "diana",
   whisperModel: "base",
@@ -29,6 +32,11 @@ export const DEFAULT_FORM_STATE: VoiceConfigFormState = {
 };
 
 const ASR_OPTIONS: Array<{ value: AsrProvider; label: string; hint: string }> = [
+  {
+    value: "platform-native-asr",
+    label: "平台原生 ASR",
+    hint: "Web/App 原生识别 · 低延迟 · 无 ASR 调用成本",
+  },
   { value: "local-whisper", label: "本地 Whisper", hint: "自托管实例" },
   {
     value: "siliconflow-sensevoice",
@@ -58,6 +66,15 @@ const TTS_OPTIONS: Array<{ value: TtsProvider; label: string; hint: string }> = 
 
 const SILICONFLOW_VOICES = ["alex", "benjamin", "charles", "david", "anna", "bella", "claire", "diana"];
 
+const PLATFORM_NATIVE_ASR_LOCALES: Array<{
+  value: PlatformNativeAsrLocale;
+  label: string;
+  hint: string;
+}> = [
+  { value: "en-US", label: "英文", hint: "en-US · 英语口语练习默认" },
+  { value: "zh-CN", label: "中文普通话", hint: "zh-CN · 中文提问/解释场景" },
+];
+
 export function formStateFromPayload(
   backend: VoiceBackend,
   config: VoiceModelConfigPayload,
@@ -66,6 +83,8 @@ export function formStateFromPayload(
     backend,
     doubaoDialogModel: config.doubao?.dialogModel ?? DEFAULT_FORM_STATE.doubaoDialogModel,
     asrProvider: config.selfhosted?.asrProvider ?? DEFAULT_FORM_STATE.asrProvider,
+    platformNativeAsrLocale:
+      config.selfhosted?.platformNativeAsrLocale ?? DEFAULT_FORM_STATE.platformNativeAsrLocale,
     ttsProvider: config.selfhosted?.ttsProvider ?? DEFAULT_FORM_STATE.ttsProvider,
     siliconflowTtsVoice:
       config.selfhosted?.siliconflowTtsVoice ?? DEFAULT_FORM_STATE.siliconflowTtsVoice,
@@ -81,6 +100,7 @@ export function formStateToPayload(state: VoiceConfigFormState): VoiceModelConfi
     doubao: { dialogModel: state.doubaoDialogModel.trim() || DEFAULT_FORM_STATE.doubaoDialogModel },
     selfhosted: {
       asrProvider: state.asrProvider,
+      platformNativeAsrLocale: state.platformNativeAsrLocale,
       ttsProvider: state.ttsProvider,
       siliconflowTtsVoice: state.siliconflowTtsVoice,
       whisperModel: state.whisperModel,
@@ -111,6 +131,9 @@ function providerOk(
   kind: "asr" | "tts",
   provider: string,
 ): boolean {
+  if (provider === "platform-native-asr") {
+    return true;
+  }
   if (provider === "local-whisper" || provider === "local-cosyvoice") {
     return true;
   }
@@ -206,6 +229,32 @@ export function VoiceConfigForm({ state, instances, disabled, onChange }: VoiceC
               ))}
             </select>
           </label>
+
+          {state.asrProvider === "platform-native-asr" ? (
+            <label className="block space-y-1 text-sm">
+              <span className="text-text-secondary">平台原生 ASR 识别语言</span>
+              <select
+                value={state.platformNativeAsrLocale}
+                disabled={disabled}
+                onChange={(event) =>
+                  onChange({
+                    ...state,
+                    platformNativeAsrLocale: event.target.value as PlatformNativeAsrLocale,
+                  })
+                }
+                className="w-full rounded-xl border border-border bg-bg px-3 py-2"
+              >
+                {PLATFORM_NATIVE_ASR_LOCALES.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label} — {option.hint}
+                  </option>
+                ))}
+              </select>
+              <span className="text-xs text-text-muted">
+                Web 端一次只能稳定识别一种语言；后续 App 端沿用同一 locale 配置。
+              </span>
+            </label>
+          ) : null}
 
           {state.asrProvider === "local-whisper" ? (
             <label className="block space-y-1 text-sm">

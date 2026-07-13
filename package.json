@@ -21,6 +21,7 @@
     "jose": "^6.2.3",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
+    "undici": "^8.7.0",
     "ws": "^8.21.0"
   },
   "devDependencies": {

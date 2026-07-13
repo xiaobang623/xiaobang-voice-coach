@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { BrowserPlatformNativeAsr } from "../adapters/asr/platformNative";
 import { DoubaoVoiceAdapter } from "../adapters/voice/doubao";
 import { SelfHostedVoiceAdapter } from "../adapters/voice/selfhosted";
 import type { BotMessageEvent, TranscriptEvent, VoiceAdapter, VoiceModelOverrides } from "../adapters/voice/types";
@@ -14,6 +15,8 @@ export interface VoiceStartOptions {
   voiceType?: string;
   speedRatio?: number;
   systemPrompt?: string;
+  /** Spoken by the Coach immediately after the live link is ready. */
+  initialGreeting?: string;
   /** Dev typing-test mode: connect without opening the microphone. */
   typingTestMode?: boolean;
 }
@@ -38,6 +41,8 @@ export interface UseVoiceSessionResult {
   conversationStartedAt: number | null;
   /** Resolved voice backend for the active or last session. */
   activeBackend: VoiceBackend | null;
+  /** Resolved ASR provider for the active or last session. */
+  activeAsrProvider: ActiveAsrProvider;
   start: (options?: VoiceStartOptions) => Promise<void>;
   /** Dev typing-test: send text instead of speaking (ChatTextQuery). */
   sendTextQuery: (text: string) => void;
@@ -60,6 +65,24 @@ const MIN_SPEECH_MS = 280;
 const MIN_LISTENING_DRAFT_MS = 520;
 
 type VoiceBackend = "doubao" | "selfhosted";
+type ActiveAsrProvider = string | null;
+
+const PLATFORM_NATIVE_ASR_PROVIDER = "platform-native-asr";
+const PLATFORM_NATIVE_ASR_AUDIO_FALLBACK_PROVIDER = "siliconflow-sensevoice";
+
+function normalizeSpeechText(value: string): string {
+  return value.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function isSameOpeningText(eventText: string, openingText: string): boolean {
+  const event = normalizeSpeechText(eventText);
+  const opening = normalizeSpeechText(openingText);
+  return (
+    event.length > 0 &&
+    opening.length > 0 &&
+    (event === opening || event.startsWith(opening) || opening.startsWith(event))
+  );
+}
 
 /** Selfhosted TTS (SiliconFlow/CosyVoice) streams in bursts with gaps up to ~0.9s — needs far more buffer than Doubao. */
 const TTS_TUNING: Record<VoiceBackend, TtsPlayerTuning> = {
@@ -79,6 +102,7 @@ interface VoiceConfigApiResponse {
     doubao?: { dialogModel?: string };
     selfhosted?: {
       asrProvider?: string;
+      platformNativeAsrLocale?: string;
       ttsProvider?: string;
       siliconflowTtsVoice?: string;
       whisperModel?: string;
@@ -124,6 +148,7 @@ async function resolveVoiceConfig(options?: VoiceStartOptions): Promise<Resolved
       ({
         doubaoDialogModel: payload.config?.doubao?.dialogModel,
         asrProvider: payload.config?.selfhosted?.asrProvider,
+        platformNativeAsrLocale: payload.config?.selfhosted?.platformNativeAsrLocale,
         ttsProvider: payload.config?.selfhosted?.ttsProvider,
         siliconflowTtsVoice: payload.config?.selfhosted?.siliconflowTtsVoice,
         whisperModel: payload.config?.selfhosted?.whisperModel,
@@ -180,10 +205,13 @@ export function useVoiceSession(): UseVoiceSessionResult {
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [conversationStartedAt, setConversationStartedAt] = useState<number | null>(null);
   const [activeBackend, setActiveBackend] = useState<VoiceBackend | null>(null);
+  const [activeAsrProvider, setActiveAsrProvider] = useState<ActiveAsrProvider>(null);
 
   const hintTimerRef = useRef<number | null>(null);
   const statusRef = useRef<VoiceSessionStatus>("ended");
   const adapterRef = useRef<VoiceAdapter | null>(null);
+  const platformNativeAsrRef = useRef<BrowserPlatformNativeAsr | null>(null);
+  const activeUserMessageIdRef = useRef<string | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -198,19 +226,25 @@ export function useVoiceSession(): UseVoiceSessionResult {
   const endAsrSentForSilenceRef = useRef<boolean>(false);
   const hasVoiceSinceEndAsrRef = useRef<boolean>(false);
   const botRespondingRef = useRef<boolean>(false);
+  const coachOutputActiveRef = useRef<boolean>(false);
   const bargeInVoicedFramesRef = useRef<number>(0);
   const bargeInHeldChunksRef = useRef<ArrayBuffer[]>([]);
   const tryEndAsrRef = useRef<(() => void) | null>(null);
   const listeningDraftIdRef = useRef<string | null>(null);
   const ensureListeningDraftRef = useRef<() => void>(() => {});
   const clearListeningDraftRef = useRef<() => void>(() => {});
+  const openingMessageIdRef = useRef<string | null>(null);
+  const openingTextRef = useRef<string | null>(null);
+  const openingSuppressUntilRef = useRef<number>(0);
 
   const clearListeningDraft = useCallback(() => {
     const draftId = listeningDraftIdRef.current;
     if (!draftId) {
+      activeUserMessageIdRef.current = null;
       return;
     }
     listeningDraftIdRef.current = null;
+    activeUserMessageIdRef.current = null;
     setMessages((previous) => previous.filter((message) => message.id !== draftId));
   }, []);
 
@@ -258,11 +292,17 @@ export function useVoiceSession(): UseVoiceSessionResult {
     streamRef.current = null;
   }, []);
 
+  const teardownPlatformNativeAsr = useCallback(() => {
+    platformNativeAsrRef.current?.stop();
+    platformNativeAsrRef.current = null;
+  }, []);
+
   const teardownConnection = useCallback(() => {
     if (hasVoiceSinceEndAsrRef.current) {
       adapterRef.current?.endAsr("stop");
     }
     ttsPlayerRef.current?.reset();
+    teardownPlatformNativeAsr();
     teardownMic();
     adapterRef.current?.disconnect();
     adapterRef.current = null;
@@ -275,6 +315,7 @@ export function useVoiceSession(): UseVoiceSessionResult {
     botRespondingRef.current = false;
     tryEndAsrRef.current = null;
     clearListeningDraft();
+    activeUserMessageIdRef.current = null;
     if (hintTimerRef.current !== null) {
       window.clearTimeout(hintTimerRef.current);
       hintTimerRef.current = null;
@@ -282,8 +323,9 @@ export function useVoiceSession(): UseVoiceSessionResult {
     setHint(null);
     setStartedAt(null);
     setActiveBackend(null);
+    setActiveAsrProvider(null);
     setStatus("ended");
-  }, [teardownMic, clearListeningDraft]);
+  }, [teardownMic, teardownPlatformNativeAsr, clearListeningDraft]);
 
   const teardownAll = useCallback(() => {
     teardownConnection();
@@ -311,6 +353,10 @@ export function useVoiceSession(): UseVoiceSessionResult {
 
   const clearConversation = useCallback(() => {
     listeningDraftIdRef.current = null;
+    activeUserMessageIdRef.current = null;
+    openingMessageIdRef.current = null;
+    openingTextRef.current = null;
+    openingSuppressUntilRef.current = 0;
     teardownAll();
     setMessages([]);
     setErrorMessage(null);
@@ -324,7 +370,10 @@ export function useVoiceSession(): UseVoiceSessionResult {
     if (!ttsPlayerRef.current) {
       const player = new TtsPcmPlayer(ttsContextRef.current, TTS_SAMPLE_RATE);
       player.setOnIdle(() => {
+        coachOutputActiveRef.current = false;
+        botRespondingRef.current = false;
         tryEndAsrRef.current?.();
+        platformNativeAsrRef.current?.resumeAfterPlayback();
       });
       ttsPlayerRef.current = player;
     }
@@ -334,8 +383,10 @@ export function useVoiceSession(): UseVoiceSessionResult {
   const playTtsChunk = useCallback(
     (audioData: ArrayBuffer) => {
       try {
+        coachOutputActiveRef.current = true;
+        platformNativeAsrRef.current?.pauseForPlayback();
         ensureTtsPlayer().enqueue(audioData);
-    void ttsContextRef.current?.resume();
+        void ttsContextRef.current?.resume();
       } catch {
         setErrorMessage("语音播放出了点问题，可以刷新页面再试。");
       }
@@ -357,6 +408,7 @@ export function useVoiceSession(): UseVoiceSessionResult {
       const draftId = listeningDraftIdRef.current;
       if (draftId) {
         listeningDraftIdRef.current = null;
+        activeUserMessageIdRef.current = draftId;
         const draftIdx = previous.findIndex((entry) => entry.id === draftId);
         if (draftIdx >= 0) {
           const next = [...previous];
@@ -365,20 +417,79 @@ export function useVoiceSession(): UseVoiceSessionResult {
         }
       }
 
+      const activeUserMessageId = activeUserMessageIdRef.current;
+      if (activeUserMessageId) {
+        const activeIdx = previous.findIndex((entry) => entry.id === activeUserMessageId);
+        if (activeIdx >= 0 && previous[activeIdx].role === "user") {
+          const hasBotAfterActive = previous
+            .slice(activeIdx + 1)
+            .some((entry) => entry.role === "bot");
+          if (hasBotAfterActive) {
+            activeUserMessageIdRef.current = null;
+          } else {
+            const next = [...previous];
+            next[activeIdx] = {
+              ...previous[activeIdx],
+              text: event.text,
+              isFinal: previous[activeIdx].isFinal || event.isFinal,
+              timestamp: event.timestamp,
+              isListeningDraft: event.text.trim().length === 0 ? previous[activeIdx].isListeningDraft : false,
+            };
+            return next;
+          }
+        }
+      }
+
       if (previous.length === 0) {
+        if (event.isFinal) {
+          activeUserMessageIdRef.current = message.id;
+        }
         return [message];
       }
 
-      const lastUserIdx = [...previous].reverse().findIndex((m) => m.role === "user");
-      if (lastUserIdx === -1) {
+      const last = previous[previous.length - 1];
+      if (!last || last.role !== "user") {
+        if (event.isFinal) {
+          activeUserMessageIdRef.current = message.id;
+        }
         return [...previous, message];
       }
-      const realIdx = previous.length - 1 - lastUserIdx;
-      const last = previous[realIdx];
+
+      const normalizedLast = normalizeSpeechText(last.text);
+      const normalizedNext = normalizeSpeechText(event.text);
+      const isDuplicateOrContinuation =
+        normalizedLast.length > 0 &&
+        normalizedNext.length > 0 &&
+        (normalizedLast === normalizedNext ||
+          normalizedLast.startsWith(normalizedNext) ||
+          normalizedNext.startsWith(normalizedLast));
+
+      if (isDuplicateOrContinuation) {
+        const next = [...previous];
+        next[next.length - 1] = {
+          ...last,
+          text: event.text,
+          isFinal: last.isFinal || event.isFinal,
+          timestamp: event.timestamp,
+          isListeningDraft: event.text.trim().length === 0 ? last.isListeningDraft : false,
+        };
+        if (event.isFinal) {
+          botRespondingRef.current = true;
+          ttsPlayerRef.current?.reset();
+        }
+        activeUserMessageIdRef.current = last.id;
+        return next;
+      }
 
       if (!last.isFinal && !event.isFinal) {
         const next = [...previous];
-        next[realIdx] = { ...last, text: event.text, timestamp: event.timestamp };
+        next[next.length - 1] = {
+          ...last,
+          text: event.text,
+          timestamp: event.timestamp,
+          isListeningDraft: event.text.trim().length === 0 ? last.isListeningDraft : false,
+        };
+        activeUserMessageIdRef.current = last.id;
         return next;
       }
 
@@ -387,13 +498,15 @@ export function useVoiceSession(): UseVoiceSessionResult {
         botRespondingRef.current = true;
         ttsPlayerRef.current?.reset();
         const next = [...previous];
-        next[realIdx] = { ...message, id: last.id };
+        next[next.length - 1] = { ...message, id: last.id, isListeningDraft: false };
+        activeUserMessageIdRef.current = last.id;
         return next;
       }
 
       if (event.isFinal) {
         botRespondingRef.current = true;
         ttsPlayerRef.current?.reset();
+        activeUserMessageIdRef.current = message.id;
       }
 
       return [...previous, message];
@@ -401,6 +514,28 @@ export function useVoiceSession(): UseVoiceSessionResult {
   }, []);
 
   const onBotMessage = useCallback((event: BotMessageEvent) => {
+    coachOutputActiveRef.current = true;
+    activeUserMessageIdRef.current = null;
+    platformNativeAsrRef.current?.pauseForPlayback();
+
+    const openingText = openingTextRef.current;
+    if (
+      openingText &&
+      Date.now() <= openingSuppressUntilRef.current &&
+      isSameOpeningText(event.text, openingText)
+    ) {
+      // `SayHello` is displayed optimistically so the user sees the guide
+      // immediately. Some backends also echo the same text as a bot-message;
+      // suppress that duplicate while still letting the TTS audio play.
+      if (event.isFinal) {
+        openingTextRef.current = null;
+        openingMessageIdRef.current = null;
+        openingSuppressUntilRef.current = 0;
+        botRespondingRef.current = false;
+      }
+      return;
+    }
+
     if (event.isFinal) {
       botRespondingRef.current = false;
       queueMicrotask(() => {
@@ -448,6 +583,118 @@ export function useVoiceSession(): UseVoiceSessionResult {
     });
   }, []);
 
+  const sayInitialGreeting = useCallback((text?: string) => {
+    const content = text?.trim();
+    if (!content || !adapterRef.current) {
+      return;
+    }
+
+    const id = crypto.randomUUID();
+    openingMessageIdRef.current = id;
+    openingTextRef.current = content;
+    openingSuppressUntilRef.current = Date.now() + 10_000;
+    botRespondingRef.current = true;
+    coachOutputActiveRef.current = true;
+    activeUserMessageIdRef.current = null;
+    platformNativeAsrRef.current?.pauseForPlayback();
+
+    setMessages((previous) => [
+      ...previous,
+      {
+        id,
+        role: "bot" as const,
+        text: content,
+        isFinal: true,
+        timestamp: Date.now(),
+      },
+    ]);
+
+    adapterRef.current.sayHello(content);
+  }, []);
+
+  const startPlatformNativeAsr = useCallback((locale?: string) => {
+    const asr = new BrowserPlatformNativeAsr(
+      {
+        onSpeechStart: () => {
+          if (coachOutputActiveRef.current) {
+            return;
+          }
+          ttsPlayerRef.current?.reset();
+          botRespondingRef.current = false;
+          ensureListeningDraftRef.current();
+        },
+        onPartial: (text) => {
+          if (coachOutputActiveRef.current) {
+            return;
+          }
+          onTranscript({
+            text,
+            isFinal: false,
+            timestamp: Date.now(),
+          });
+        },
+        onFinal: (text) => {
+          const content = text.trim();
+          if (!content || !adapterRef.current || coachOutputActiveRef.current) {
+            return;
+          }
+          onTranscript({
+            text: content,
+            isFinal: true,
+            timestamp: Date.now(),
+          });
+          adapterRef.current.sendTextQuery(content);
+        },
+        onAmend: (fullText) => {
+          const content = fullText.trim();
+          if (!content || !adapterRef.current || coachOutputActiveRef.current) {
+            return;
+          }
+          // 反悔合并：用户提交后马上接着说——丢弃对半句的回复气泡和音频，
+          // 用户气泡恢复成完整长句，整句重新提问。
+          ttsPlayerRef.current?.reset();
+          botRespondingRef.current = true;
+          const activeUserMessageId = activeUserMessageIdRef.current;
+          if (activeUserMessageId) {
+            setMessages((previous) => {
+              const activeIdx = previous.findIndex((entry) => entry.id === activeUserMessageId);
+              if (activeIdx < 0) {
+                return previous;
+              }
+              const rest = previous.slice(activeIdx + 1).filter((entry) => entry.role !== "bot");
+              if (rest.length === previous.length - activeIdx - 1) {
+                return previous;
+              }
+              return [...previous.slice(0, activeIdx + 1), ...rest];
+            });
+          }
+          onTranscript({
+            text: content,
+            isFinal: true,
+            timestamp: Date.now(),
+          });
+          const adapter = adapterRef.current;
+          if (adapter.amendTextQuery) {
+            adapter.amendTextQuery(content);
+          } else {
+            adapter.sendTextQuery(content);
+          }
+        },
+        onError: (error) => {
+          showHint(error.message);
+        },
+      },
+      { locale },
+    );
+
+    const started = asr.start();
+    if (!started) {
+      return false;
+    }
+    platformNativeAsrRef.current = asr;
+    return true;
+  }, [onTranscript, showHint]);
+
   const start = useCallback(async (options?: VoiceStartOptions) => {
     if (statusRef.current === "connecting" || statusRef.current === "active") {
       return;
@@ -464,8 +711,18 @@ export function useVoiceSession(): UseVoiceSessionResult {
       ttsPlayerRef.current?.reset();
 
       const resolved = await resolveVoiceConfig(options);
+      // Voice/model rule: do not silently swap TTS providers or voices.
+      // Use the admin-resolved model config as the global default; if the user
+      // selected a supported voice, `options.voiceType` overrides only voice id.
+      const effectiveModelOverrides = resolved.modelOverrides;
       ttsPlayerRef.current?.setTuning(TTS_TUNING[resolved.backend]);
       setActiveBackend(resolved.backend);
+      const configuredAsrProvider = effectiveModelOverrides.asrProvider ?? null;
+      const shouldUsePlatformNativeAsr =
+        !skipMic &&
+        resolved.backend === "selfhosted" &&
+        configuredAsrProvider === PLATFORM_NATIVE_ASR_PROVIDER;
+      setActiveAsrProvider(configuredAsrProvider);
       const adapter = createVoiceAdapter(resolved.backend);
       adapterRef.current = adapter;
 
@@ -511,10 +768,26 @@ export function useVoiceSession(): UseVoiceSessionResult {
         voiceType: options?.voiceType,
         speedRatio: options?.speedRatio,
         systemPrompt: options?.systemPrompt,
-        modelOverrides: resolved.modelOverrides,
+        modelOverrides: shouldUsePlatformNativeAsr
+          ? {
+              ...effectiveModelOverrides,
+              // Text-query + TTS still need a valid selfhosted backend config.
+              // If the browser cannot run platform-native ASR, the normal audio
+              // path can fall back to this cloud ASR instead of an unknown key.
+              asrProvider: PLATFORM_NATIVE_ASR_AUDIO_FALLBACK_PROVIDER,
+            }
+          : effectiveModelOverrides,
       });
 
-      if (!skipMic) {
+      if (shouldUsePlatformNativeAsr) {
+        const started = startPlatformNativeAsr(effectiveModelOverrides.platformNativeAsrLocale);
+        if (!started) {
+          setActiveAsrProvider(PLATFORM_NATIVE_ASR_AUDIO_FALLBACK_PROVIDER);
+          showHint("当前浏览器不支持平台原生 ASR，已回退到云端 ASR。");
+        }
+      }
+
+      if (!skipMic && platformNativeAsrRef.current === null) {
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: {
             channelCount: 1,
@@ -672,6 +945,7 @@ export function useVoiceSession(): UseVoiceSessionResult {
       setStartedAt(now);
       setConversationStartedAt((prev) => prev ?? now);
       setStatus("active");
+      sayInitialGreeting(options?.initialGreeting);
     } catch (error) {
       teardownConnection();
       if (error instanceof DOMException && error.name === "NotAllowedError") {
@@ -686,6 +960,8 @@ export function useVoiceSession(): UseVoiceSessionResult {
     onBotMessage,
     playTtsChunk,
     showHint,
+    sayInitialGreeting,
+    startPlatformNativeAsr,
     teardownConnection,
     clearListeningDraft,
   ]);
@@ -710,6 +986,7 @@ export function useVoiceSession(): UseVoiceSessionResult {
     adapterRef.current.sendTextQuery(content);
     botRespondingRef.current = true;
     ttsPlayerRef.current?.reset();
+    activeUserMessageIdRef.current = null;
   }, []);
 
   useEffect(() => {
@@ -726,6 +1003,7 @@ export function useVoiceSession(): UseVoiceSessionResult {
     startedAt,
     conversationStartedAt,
     activeBackend,
+    activeAsrProvider,
     start,
     sendTextQuery,
     stop,

@@ -1,5 +1,5 @@
-import { adminUsersCount, createAdminUser } from "../../_lib/admin-auth.js";
-import { setJsonCors, readJsonBody, json } from "../../_lib/http.js";
+import { adminUsersCount, createAdminUser } from "../api/_lib/admin-auth.js";
+import { setJsonCors, readJsonBody, json } from "../api/_lib/http.js";
 
 export default async function handler(req, res) {
   setJsonCors(res);

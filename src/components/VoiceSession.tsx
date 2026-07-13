@@ -4,21 +4,31 @@ import type { ReportJSON, SessionSettings, TaskScenario, TopicOption, VoiceOptio
 import type { UseVoiceSessionResult } from "../hooks/useVoiceSession";
 import { SPEED_OPTIONS } from "../config/session";
 import { isTypingTestAvailable } from "../config/features";
-import { ReportView } from "./ReportView";
 import { TaskCard } from "./TaskCard";
 import { TaskChecklist } from "./TaskChecklist";
-import { TopicBridge, CoachOpeningBubble } from "./TopicBridge";
 import { Button } from "./ui/Button";
 import { Card } from "./ui/Card";
 import { KeyboardIcon, SlidersIcon, SpeakerIcon } from "./ui/icons";
 import { Mascot, type MascotExpression } from "./ui/Mascot";
 import { VoiceAvatar } from "./ui/VoiceAvatar";
 
+const FREE_TALK_GREETING = "Hey, good to see you! What would you like to talk about today?";
+
 function formatElapsed(startedAt: number, now: number): string {
   const totalSeconds = Math.max(0, Math.floor((now - startedAt) / 1000));
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
+function getOpeningGreeting(activeTask?: TaskScenario | null, activeTopic?: TopicOption | null): string {
+  if (activeTask?.greeting) {
+    return activeTask.greeting;
+  }
+  if (activeTopic?.greeting) {
+    return activeTopic.greeting;
+  }
+  return FREE_TALK_GREETING;
 }
 
 function MicIcon({ className }: { className?: string }) {
@@ -318,6 +328,24 @@ function RealtimeHintToast({ message }: { message: string }) {
   );
 }
 
+function SessionGuideBanner({
+  activeTask,
+}: {
+  activeTask?: TaskScenario | null;
+}) {
+  const body = activeTask
+    ? "继续按角色场景回答，完成当前小目标。"
+    : "跟着小榜的问题继续说，答短一点也可以。";
+
+  return (
+    <li className="sticky top-2 z-20">
+      <div className="mx-auto flex max-w-[86%] items-center justify-center rounded-full border border-white/10 bg-bg-canvas/72 px-3 py-1.5 text-[12px] text-ink-on-canvas-faint shadow-card backdrop-blur-md">
+        <span className="truncate">{body}</span>
+      </div>
+    </li>
+  );
+}
+
 function CoachAvatar({ status }: { status: "connecting" | "active" | "ended" }) {
   const expression: MascotExpression =
     status === "connecting" ? "thinking" : status === "active" ? "talking" : "idle";
@@ -349,9 +377,8 @@ export interface VoiceSessionProps {
   report: ReportJSON | null;
   reportLoading: boolean;
   reportError: string | null;
-  wordCount: number;
-  sentenceCount: number;
   onEndAndReport: () => void;
+  onViewReport: () => void;
 }
 
 export function VoiceSession({
@@ -374,12 +401,22 @@ export function VoiceSession({
   report,
   reportLoading,
   reportError,
-  wordCount,
-  sentenceCount,
   onEndAndReport,
+  onViewReport,
 }: VoiceSessionProps) {
-  const { status, messages, errorMessage, hint, startedAt, start, stop, sendTextQuery } = voice;
+  const {
+    status,
+    messages,
+    errorMessage,
+    hint,
+    startedAt,
+    activeAsrProvider,
+    start,
+    stop,
+    sendTextQuery,
+  } = voice;
   const listRef = useRef<HTMLDivElement | null>(null);
+  const stickToBottomRef = useRef(true);
   const [now, setNow] = useState(() => Date.now());
   const [typingTestMode, setTypingTestMode] = useState(false);
   const [draftText, setDraftText] = useState("");
@@ -404,6 +441,12 @@ export function VoiceSession({
   voiceTypeRef.current = voiceType;
   speedRatioRef.current = speedRatio;
 
+  const isActive = status === "active" || status === "connecting";
+  const sessionLocked = isActive;
+  const hasHistory = messages.length > 0;
+  const userHasSpoken = messages.some((message) => message.role === "user" && message.text.trim().length > 0);
+  const canGenerateReport = userHasSpoken && !report && !reportLoading;
+
   const handleStart = useCallback(() => {
     void start({
       sessionId: appSessionId,
@@ -412,9 +455,20 @@ export function VoiceSession({
       voiceType: voiceTypeRef.current,
       speedRatio: speedRatioRef.current,
       systemPrompt: settings.systemPrompt,
+      initialGreeting: hasHistory ? undefined : getOpeningGreeting(activeTask, activeTopic),
       typingTestMode: isTypingTestAvailable() && typingTestMode,
     });
-  }, [start, appSessionId, usageUserId, usageGuestId, settings.systemPrompt, typingTestMode]);
+  }, [
+    start,
+    appSessionId,
+    usageUserId,
+    usageGuestId,
+    settings.systemPrompt,
+    hasHistory,
+    activeTask,
+    activeTopic,
+    typingTestMode,
+  ]);
 
   const handleSendText = useCallback(() => {
     const text = draftText.trim();
@@ -425,11 +479,6 @@ export function VoiceSession({
     setDraftText("");
   }, [draftText, sendTextQuery]);
 
-  const isActive = status === "active" || status === "connecting";
-  const sessionLocked = isActive;
-  const hasHistory = messages.length > 0;
-  const canGenerateReport = hasHistory && !report && !reportLoading;
-
   const statusTone: "idle" | "connecting" | "live" | "paused" =
     status === "connecting"
       ? "connecting"
@@ -439,12 +488,27 @@ export function VoiceSession({
           ? "paused"
           : "idle";
 
+  // 贴底跟随：用户在底部附近时新消息平滑滚入；往上翻历史时不打扰。
   useEffect(() => {
-    if (!listRef.current) {
+    const list = listRef.current;
+    if (!list) {
       return;
     }
-    listRef.current.scrollTop = listRef.current.scrollHeight;
-  }, [messages, report]);
+    const handleScroll = () => {
+      const distanceFromBottom = list.scrollHeight - list.scrollTop - list.clientHeight;
+      stickToBottomRef.current = distanceFromBottom < 120;
+    };
+    list.addEventListener("scroll", handleScroll, { passive: true });
+    return () => list.removeEventListener("scroll", handleScroll);
+  }, []);
+
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list || !stickToBottomRef.current) {
+      return;
+    }
+    list.scrollTo({ top: list.scrollHeight, behavior: "smooth" });
+  }, [messages]);
 
   useEffect(() => {
     if (status !== "active") {
@@ -459,7 +523,10 @@ export function VoiceSession({
       return "正在接通，稍等一下…";
     }
     if (status === "active" && startedAt) {
-      return `对话中 · ${formatElapsed(startedAt, now)}`;
+      return userHasSpoken ? `对话中 · ${formatElapsed(startedAt, now)}` : "";
+    }
+    if (reportLoading && !report) {
+      return "正在生成复盘，稍等一下…";
     }
     if (hasHistory && report) {
       return "复盘好了 · 想继续聊就点麦克风";
@@ -472,16 +539,19 @@ export function VoiceSession({
 
   const emptyHint = (() => {
     if (isActive) {
+      if (activeAsrProvider === "platform-native-asr") {
+        return "平台原生 ASR 已开启，说话会实时转成文字";
+      }
       if (typingTestMode) {
         return "打字测试模式 · 在底部输入英文发送";
       }
       if (activeTask) {
-        return "说点什么吧，试着完成你的任务目标";
+        return "听完小榜开场，用一句英文接住任务";
       }
       if (activeTopic) {
-        return "说点什么吧，从这个话题接着聊";
+        return "听完小榜开场，用一句英文接着聊";
       }
-      return "说点什么吧，我听着呢";
+      return "小榜会先开口，你跟着回答就好";
     }
     if (hasHistory) {
       return typingTestMode
@@ -500,24 +570,24 @@ export function VoiceSession({
     return "点麦克风，随便聊点什么都行";
   })();
 
-  const coachExpression: MascotExpression =
-    status === "connecting" ? "thinking" : status === "active" ? "talking" : "idle";
-
   const showTaskCard =
     activeTask && !taskCardDismissed && messages.length === 0 && !report;
-  const showTopicBridge =
-    !activeTask && activeTopic && messages.length === 0 && !report;
   const showTaskChecklist = activeTask && taskCardDismissed && !report;
+  const showGuideBanner = isActive && userHasSpoken && !errorMessage && !report;
 
   return (
-    <section className="animate-fade-up flex min-h-0 w-full flex-1 flex-col bg-bg-canvas text-ink-on-canvas md:mx-auto md:max-w-[40rem] md:overflow-hidden md:rounded-[24px] md:border md:border-white/10">
+    <section className="animate-fade-up flex min-h-0 h-full w-full flex-1 flex-col overflow-hidden bg-bg-canvas text-ink-on-canvas md:mx-auto md:max-w-[40rem] md:rounded-[24px] md:border md:border-white/10">
       {hint ? <RealtimeHintToast message={hint} /> : null}
 
       <div className="flex shrink-0 items-center justify-between gap-2 px-1 py-1.5 md:px-4 md:pt-4">
-        <div className="flex min-w-0 items-center gap-2">
-          <SessionStatusDot status={statusTone} />
-          <p className="truncate text-sm tabular-nums text-ink-on-canvas-soft">{statusLine}</p>
-        </div>
+        {statusLine ? (
+          <div className="flex min-w-0 items-center gap-2">
+            <SessionStatusDot status={statusTone} />
+            <p className="truncate text-sm tabular-nums text-ink-on-canvas-soft">{statusLine}</p>
+          </div>
+        ) : (
+          <span className="min-w-0 flex-1" aria-hidden="true" />
+        )}
         <div className="flex shrink-0 items-center gap-1.5">
           {isTypingTestAvailable() ? (
             <button
@@ -619,7 +689,10 @@ export function VoiceSession({
         </Card>
       ) : null}
 
-      <div ref={listRef} className="relative z-10 mt-2 min-h-0 flex-1 overflow-y-auto px-1 md:px-4">
+      <div
+        ref={listRef}
+        className="relative z-10 mt-2 min-h-0 flex-1 overflow-y-auto overscroll-contain px-1 md:px-4"
+      >
         {errorMessage ? (
           <div className="mb-3 rounded-2xl bg-error-bg px-4 py-3 text-sm text-error">
             {errorMessage}
@@ -633,29 +706,30 @@ export function VoiceSession({
             </li>
           ) : null}
 
-          {showTopicBridge && activeTopic ? (
-            <TopicBridge topic={activeTopic} expression={coachExpression} />
-          ) : null}
-
-          {!showTaskCard && !activeTask && !activeTopic && messages.length === 0 && !report ? (
-            <CoachOpeningBubble
-              text="想到什么说什么，点麦克风我先跟你打招呼～"
-              expression={coachExpression}
-            />
-          ) : null}
-
           {showTaskChecklist ? (
             <li>
               <TaskChecklist goals={activeTask.goals} title={activeTask.title} />
             </li>
           ) : null}
 
+          {showGuideBanner ? <SessionGuideBanner activeTask={activeTask} /> : null}
+
           {messages.map((message) =>
             message.role === "user" ? (
-              <li key={message.id} className="flex justify-end">
+              <li key={message.id} className="animate-fade-up flex justify-end">
                 <div className="min-w-[5.5rem] max-w-[85%] rounded-[18px] rounded-br-sm border border-white/10 bg-surface-canvas-raised px-4 py-2.5 text-ink-on-canvas">
                   {message.isListeningDraft ? (
-                    <UserListeningBubble />
+                    message.text.trim().length > 0 ? (
+                      <p
+                        className={`break-words text-[15px] leading-relaxed ${
+                          message.isFinal ? "" : "opacity-80 italic"
+                        }`}
+                      >
+                        {message.text}
+                      </p>
+                    ) : (
+                      <UserListeningBubble />
+                    )
                   ) : (
                     <p
                       className={`break-words text-[15px] leading-relaxed ${
@@ -668,7 +742,7 @@ export function VoiceSession({
                 </div>
               </li>
             ) : (
-              <li key={message.id} className="flex items-end gap-2.5">
+              <li key={message.id} className="animate-fade-up flex items-end gap-2.5">
                 <CoachAvatar
                   status={
                     message.isFinal
@@ -702,26 +776,8 @@ export function VoiceSession({
           )}
         </ul>
 
-        {reportLoading ? (
-          <div className="mt-6 flex flex-col items-center gap-3 py-4">
-            <Mascot expression="thinking" size={40} />
-            <p className="text-sm text-ink-on-canvas-soft">正在整理今天的复盘…</p>
-          </div>
-        ) : null}
-
         {reportError ? (
           <div className="mt-4 rounded-2xl bg-error-bg px-5 py-3 text-sm text-error">{reportError}</div>
-        ) : null}
-
-        {report ? (
-          <div className="mt-4 rounded-t-[24px] bg-bg p-5 text-text">
-            <ReportView
-              report={report}
-              wordCount={wordCount}
-              sentenceCount={sentenceCount}
-              taskGoals={activeTask?.goals}
-            />
-          </div>
         ) : null}
       </div>
 
@@ -809,10 +865,14 @@ export function VoiceSession({
               {isActive
                 ? typingTestMode
                   ? "打字测试 · 底部输入发送"
-                  : "麦克风开着 · 随时开口"
-                : hasHistory
-                  ? "轻触继续对话"
-                  : emptyHint}
+                  : activeAsrProvider === "platform-native-asr"
+                    ? "平台原生 ASR · 实时听写中"
+                    : "麦克风开着 · 随时开口"
+                : reportLoading && !report
+                  ? "复盘生成中，稍等一下…"
+                  : hasHistory
+                    ? "轻触继续对话"
+                    : emptyHint}
             </p>
 
             {!isActive && canGenerateReport ? (
@@ -824,6 +884,17 @@ export function VoiceSession({
                 className="!border-[rgba(244,243,240,0.18)] !bg-[rgba(244,243,240,0.1)] !text-ink-on-canvas backdrop-blur-[16px] hover:!bg-[rgba(244,243,240,0.16)]"
               >
                 结束本次对话并生成复盘
+              </Button>
+            ) : null}
+
+            {report ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onViewReport}
+                className="!border-[rgba(244,243,240,0.18)] !bg-[rgba(244,243,240,0.1)] !text-ink-on-canvas backdrop-blur-[16px] hover:!bg-[rgba(244,243,240,0.16)]"
+              >
+                查看复盘报告
               </Button>
             ) : null}
           </div>

@@ -1,5 +1,5 @@
-import { clearAuthCookie, requireAdmin } from "../../_lib/admin-auth.js";
-import { setJsonCors, json } from "../../_lib/http.js";
+import { requireAdmin } from "../api/_lib/admin-auth.js";
+import { setJsonCors, json } from "../api/_lib/http.js";
 
 export default async function handler(req, res) {
   setJsonCors(res);
@@ -9,7 +9,7 @@ export default async function handler(req, res) {
     return;
   }
 
-  if (req.method !== "POST") {
+  if (req.method !== "GET") {
     json(res, 405, { success: false, error: "Method not allowed" });
     return;
   }
@@ -19,6 +19,11 @@ export default async function handler(req, res) {
     return;
   }
 
-  clearAuthCookie(res);
-  json(res, 200, { success: true });
+  json(res, 200, {
+    success: true,
+    data: {
+      username: user.username,
+      role: user.role,
+    },
+  });
 }

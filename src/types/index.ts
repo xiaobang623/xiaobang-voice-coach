@@ -6,6 +6,8 @@ export interface TopicOption {
   description: string;
   /** Shown in the chat screen so the user knows what to expect after picking a topic. */
   openingHint?: string;
+  /** Spoken aloud by the Coach right after connecting, so the Coach opens the conversation. */
+  greeting?: string;
   /**
    * English guidance appended to the Coach's system_role so the opening line
    * actually sticks to the chosen topic. "" / undefined = free talk.
@@ -94,12 +96,42 @@ export interface Correction {
   example?: string;
 }
 
+/** A correct-but-plain sentence the user said, upgraded to a richer version. */
+export interface GrowthSayBetter {
+  original: string;
+  upgraded: string;
+  note: string;
+}
+
+/** A topic-relevant spoken chunk / pattern worth learning. */
+export interface GrowthNewExpression {
+  phrase: string;
+  meaning: string;
+  example: string;
+}
+
+/** An angle the user could expand on next time, with a ready-to-use opener. */
+export interface GrowthTalkMore {
+  angle: string;
+  starter: string;
+}
+
+/** 口语提升包 — helps the user say more / say it better, beyond error fixing. */
+export interface ReportGrowth {
+  topic: string;
+  sayBetter: GrowthSayBetter[];
+  newExpressions: GrowthNewExpression[];
+  talkMore: GrowthTalkMore[];
+}
+
 export interface ReportJSON {
   sessionId: string;
   createdAt: string;
   durationSeconds: number;
   userLevel: UserLevel;
   corrections: Correction[];
+  /** 口语提升包：下次这样说 / 新表达 / 还能聊什么。Absent on old reports or very short sessions. */
+  growth?: ReportGrowth;
   /** Present only for task-mode sessions. */
   taskResults?: TaskResult[];
   /** e.g. "2/3" — count of done goals over total. */

@@ -1,5 +1,9 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { postProcessReport, SYSTEM_PROMPT } from "../_shared/reportPostProcess.ts";
+import {
+  cleanTranscriptForReport,
+  postProcessReport,
+  SYSTEM_PROMPT,
+} from "../_shared/reportPostProcess.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -50,6 +54,8 @@ Deno.serve(async (req) => {
     });
   }
 
+  const cleanedTranscript = cleanTranscriptForReport(body.transcript);
+  const transcriptForModel = cleanedTranscript.trim() || body.transcript;
   const taskGoalsBlock =
     Array.isArray(body.taskGoals) && body.taskGoals.length > 0
       ? `\n\nTask goals to judge:\n${body.taskGoals.map((g) => `- [${g.id}] ${g.desc}`).join("\n")}`
@@ -69,7 +75,7 @@ Deno.serve(async (req) => {
         { role: "system", content: SYSTEM_PROMPT },
         {
           role: "user",
-          content: `sessionId: ${body.sessionId}\ndurationSeconds: ${body.durationSeconds}${taskGoalsBlock}\n\nTranscript:\n${body.transcript}`,
+          content: `sessionId: ${body.sessionId}\ndurationSeconds: ${body.durationSeconds}${taskGoalsBlock}\n\nTranscript (lightly cleaned for obvious ASR noise):\n${transcriptForModel}`,
         },
       ],
     }),

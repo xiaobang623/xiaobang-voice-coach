@@ -1,0 +1,13 @@
+# 自建语音后端（平台原生 ASR → DeepSeek → TTS）的 Railway 服务配置。
+# 在 Railway 新服务的 Settings → Config-as-code 里把 config path 指向本文件，
+# 与跑 proxy.js 的豆包代理服务互不影响。
+[build]
+builder = "NIXPACKS"
+# 只需要运行时依赖，跳过 Vite/TypeScript 前端构建
+buildCommand = "npm install --omit=dev"
+
+[deploy]
+startCommand = "node backend/server.js"
+healthcheckPath = "/health"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"

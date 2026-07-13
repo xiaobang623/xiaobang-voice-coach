@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { WebSocketServer, WebSocket } from "ws";
+import { Agent as UndiciAgent, setGlobalDispatcher } from "undici";
 import { createClient } from "@supabase/supabase-js";
 import {
   configFromModelOverrides,
@@ -24,22 +25,60 @@ import {
 } from "../api/_lib/siliconflow-voice.js";
 import { logTokenUsage } from "../api/_lib/token-cost.js";
 
-const PORT = Number(process.env.SELFHOSTED_VOICE_PORT || 8081);
+// Keep HTTP connections to TTS/ASR/DeepSeek warm between turns — the default
+// fetch agent drops idle sockets after ~4s, so every turn paid a fresh
+// TCP(+TLS) handshake. Turns are usually more than 4s apart.
+setGlobalDispatcher(
+  new UndiciAgent({
+    keepAliveTimeout: 60_000,
+    keepAliveMaxTimeout: 300_000,
+  }),
+);
+
+// Railway 等云平台注入 PORT；本地用 SELFHOSTED_VOICE_PORT 或默认 8081。
+const PORT = Number(process.env.SELFHOSTED_VOICE_PORT || process.env.PORT || 8081);
+const IS_CLOUD_BIND = Boolean(process.env.SELFHOSTED_VOICE_PORT || process.env.PORT);
 const WS_PATH = "/ws";
 const ENV_LOCAL_PATH = resolve(process.cwd(), ".env.local");
 const WHISPER_BASE_URL = process.env.WHISPER_BASE_URL ?? "http://127.0.0.1:8000";
 const COSYVOICE_BASE_URL = process.env.COSYVOICE_BASE_URL ?? "http://127.0.0.1:8001";
 const OUTPUT_SAMPLE_RATE = 16000;
-const DEFAULT_COSYVOICE_SPEED = 0.85;
-const DEFAULT_SILICONFLOW_SPEED = 0.85;
+const DEFAULT_COSYVOICE_SPEED = 1.0;
+const DEFAULT_SILICONFLOW_SPEED = 1.0;
 const HEALTH_CHECK_TTL_MS = 10_000;
+/** Cache synthesized PCM for short, repeated coach lines (keyed by provider+voice+speed+text). */
+const TTS_CACHE_MAX_ENTRIES = 32;
+const TTS_CACHE_MAX_TEXT_CHARS = 120;
+/** Conversational fillers pre-synthesized at session start; double as a TTS warmup. */
+const TTS_FILLER_TEXTS = ["Hmm.", "Okay.", "Right."];
+/**
+ * If no real audio has gone out this long after the user's turn, play a filler
+ * to mask latency. Default 0 = disabled: with this chain's steady ~2s TTFB the
+ * filler fired on every turn and read as a robotic tic that never matched the
+ * subtitle text. Re-enable via env for experiments, e.g. TTS_FILLER_DELAY_MS=1800.
+ */
+const FILLER_DELAY_MS = Number(process.env.TTS_FILLER_DELAY_MS ?? 0);
+/** Pad fillers with trailing silence so they clear the client prime buffer and land as a natural beat. */
+const FILLER_TOTAL_MS = 1000;
+/**
+ * Cloud TTS warmup is disabled by default: SiliconFlow's first tiny warmup
+ * request can spend several seconds cold-starting and compete with the user's
+ * real first reply, making perceived opening latency worse. Enable only when
+ * deliberately testing fillers or provider warmup behavior.
+ */
+const TTS_WARMUP_ENABLED = process.env.TTS_WARMUP_ENABLED === "true";
+const PLATFORM_NATIVE_ASR_PROVIDER = "platform-native-asr";
+const PLATFORM_NATIVE_ASR_AUDIO_FALLBACK_PROVIDER = "siliconflow-sensevoice";
 const modelInstances = parseModelInstances();
 const DEEPSEEK_URL = "https://api.deepseek.com/chat/completions";
 const DEFAULT_COACH_PROMPT = [
   "You are Xiaobang Coach, a warm English speaking partner.",
   "Reply like a real live conversation, not a lesson or written explanation.",
   "Prefer one short spoken sentence under 15 words; use two only when necessary.",
-  "Ask at most one simple question, and avoid long clauses or over-explaining.",
+  "Your job is to keep the learner talking: end almost every reply with exactly one short, easy follow-up question.",
+  "Never reply with only a comment like 'That's great' — react briefly, then ask something concrete.",
+  "If the learner gives a short answer, dig deeper: ask why, how, or for an example.",
+  "When a topic runs dry, proactively suggest a new concrete angle or a related everyday topic instead of waiting.",
   "Do not use markdown, bullet points, emojis, stage directions, or grammar lectures.",
 ].join(" ");
 
@@ -67,6 +106,28 @@ function parseEnvLocalFile() {
 }
 
 const envLocal = parseEnvLocalFile();
+
+// 与 proxy.js 相同的 Origin 白名单：公网部署时设 ALLOWED_ORIGINS，避免任意站点消耗 DeepSeek/TTS 额度。
+function parseAllowedOrigins() {
+  const raw = process.env.ALLOWED_ORIGINS ?? "";
+  return raw
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+}
+
+const allowedOrigins = parseAllowedOrigins();
+
+function isOriginAllowed(origin) {
+  if (!origin) {
+    return allowedOrigins.length === 0;
+  }
+  if (allowedOrigins.length === 0) {
+    return true;
+  }
+  return allowedOrigins.includes(origin);
+}
+
 const deepseekApiKey = process.env.DEEPSEEK_API_KEY ?? envLocal.DEEPSEEK_API_KEY;
 const siliconflowApiKey = resolveSiliconFlowApiKey(envLocal);
 const supabaseUrl = process.env.VITE_SUPABASE_URL ?? process.env.SUPABASE_URL ?? envLocal.VITE_SUPABASE_URL;
@@ -216,6 +277,35 @@ function createPcmSocketBatcher(socket, flushBytes = 3200) {
 /** Split assistant text into speakable units as DeepSeek streams (supports EN + CN punctuation). */
 const SENTENCE_BOUNDARY_RE = /^([\s\S]*?[.!?。！？])(?:\s+|$)/u;
 
+// 首句抢跑加强（07-11）：Coach 回复收紧到 15 词内后基本是一整句，等句号 = 等 DeepSeek 全文，
+// 抢跑形同虚设（实测 tts-start 总在 deepseek-done 之后）。第一批不等句号：
+// 攒到从句标点（逗号等）或足够长的词边界就先切一段去 TTS，把 SiliconFlow ~0.6-0.9s 的
+// 首包成本提前到 DeepSeek 还在吐字的时候摊付。只影响本轮第一批，后续仍按整句/大批攒。
+const EARLY_FIRST_CUT_MIN_CLAUSE_CHARS = 16; // 从句标点切分的最小段长
+const EARLY_FIRST_CUT_MIN_WORD_CHARS = 36; // 无标点时按词边界切的最小段长
+const CLAUSE_BOUNDARY_RE = /([,;:][)"'”’]?\s+|[，；：、][)"'”’]?)/g;
+
+function findEarlyFirstCut(pending) {
+  // 优先切在最后一个从句标点之后：标点留在前一段里，TTS 会读出自然停顿
+  let clauseCut = -1;
+  let match;
+  CLAUSE_BOUNDARY_RE.lastIndex = 0;
+  while ((match = CLAUSE_BOUNDARY_RE.exec(pending)) !== null) {
+    clauseCut = match.index + match[0].length;
+  }
+  if (clauseCut >= EARLY_FIRST_CUT_MIN_CLAUSE_CHARS) {
+    return clauseCut;
+  }
+  // 没有标点但已经很长：退而求其次切在词边界，避免半个单词进 TTS
+  if (pending.length >= EARLY_FIRST_CUT_MIN_WORD_CHARS) {
+    const wordCut = pending.lastIndexOf(" ");
+    if (wordCut >= EARLY_FIRST_CUT_MIN_CLAUSE_CHARS) {
+      return wordCut + 1;
+    }
+  }
+  return -1;
+}
+
 function drainSpeakableUnits(text, fromIndex, minUnitLength = 2) {
   const units = [];
   let cursor = fromIndex;
@@ -258,7 +348,7 @@ function createPrefetchTtsStream(text, connection, timer) {
     notify();
   };
 
-  const synthPromise = synthesizeReply(text, connection, timer, onChunk)
+  const synthPromise = synthesizeReplyCached(text, connection, timer, onChunk)
     .then(() => {
       done = true;
       notify();
@@ -291,10 +381,12 @@ function createPrefetchTtsStream(text, connection, timer) {
   return iterateChunks();
 }
 
-function createStreamingTtsQueue({ socket, connection, timer, isTurnCurrent }) {
+function createStreamingTtsQueue({ socket, connection, timer, isTurnCurrent, fillerGuard }) {
   const pcmBatcher = createPcmSocketBatcher(socket);
   let sendChain = Promise.resolve();
   let started = false;
+  let sentAudio = false;
+  let batchesStarted = 0;
   let pendingTtsText = "";
 
   const shouldSpeakBuffered = (text, force) => {
@@ -305,8 +397,13 @@ function createStreamingTtsQueue({ socket, connection, timer, isTurnCurrent }) {
     if (force) {
       return true;
     }
-    // 每个 TTS 请求有 1~3s 固定首包成本，短回复逐句请求会在句间留出遮不住的空窗；
-    // 整条回复攒成一次请求（回复很短，DeepSeek 全文只比首句晚几百 ms），超长才分段。
+    // 首句抢跑：第一批只要凑出一个像样的句子就立刻请求 TTS，让首包成本
+    // 尽早开始摊付；太短的首句（"Great!"）先攒着，避免它播完时第二批还没就绪。
+    if (batchesStarted === 0) {
+      return trimmed.length >= 12;
+    }
+    // 每个 TTS 请求有 1~3s 固定首包成本，后续内容攒大批次减少句间空窗；
+    // 第二批在首句播放期间并行预取，首包成本被首句播放时间盖住。
     return trimmed.length >= 160;
   };
 
@@ -316,6 +413,7 @@ function createStreamingTtsQueue({ socket, connection, timer, isTurnCurrent }) {
       return;
     }
 
+    batchesStarted += 1;
     const stream = createPrefetchTtsStream(trimmed, connection, timer);
 
     sendChain = sendChain.then(async () => {
@@ -330,6 +428,13 @@ function createStreamingTtsQueue({ socket, connection, timer, isTurnCurrent }) {
       for await (const chunk of stream) {
         if (isTurnCurrent && !isTurnCurrent()) {
           return;
+        }
+        if (!sentAudio) {
+          sentAudio = true;
+          const lead = fillerGuard?.takeLead();
+          if (lead) {
+            pcmBatcher.push(lead);
+          }
         }
         pcmBatcher.push(chunk);
       }
@@ -352,6 +457,18 @@ function createStreamingTtsQueue({ socket, connection, timer, isTurnCurrent }) {
     startUnitStream(batch);
   };
 
+  // 首句抢跑加强：不等阈值/句号，立刻把已攒文本（含未说完的短句）作为一批发出去
+  const enqueueNow = (text) => {
+    const piece = text.trim();
+    if (!piece) {
+      return;
+    }
+    pendingTtsText = pendingTtsText ? `${pendingTtsText} ${piece}` : piece;
+    const batch = pendingTtsText;
+    pendingTtsText = "";
+    startUnitStream(batch);
+  };
+
   const flush = async () => {
     if (pendingTtsText.trim()) {
       const batch = pendingTtsText;
@@ -367,7 +484,13 @@ function createStreamingTtsQueue({ socket, connection, timer, isTurnCurrent }) {
     timer?.mark("audio-sent");
   };
 
-  return { enqueue, flush, get started() { return started; } };
+  return {
+    enqueue,
+    enqueueNow,
+    flush,
+    get started() { return started; },
+    get batches() { return batchesStarted; },
+  };
 }
 
 let turnCounter = 0;
@@ -399,11 +522,43 @@ function createTurnTimer(kind = "turn") {
 }
 
 function getAsrProvider(connection) {
-  return connection?.voiceModelConfig?.selfhosted?.asrProvider ?? "siliconflow-sensevoice";
+  const provider = connection?.voiceModelConfig?.selfhosted?.asrProvider ?? PLATFORM_NATIVE_ASR_AUDIO_FALLBACK_PROVIDER;
+  // 平台原生 ASR 正常不会把音频发到后端；若浏览器不支持或异常回到音频链路，
+  // 后端用 SenseVoiceSmall 兜底，避免 unknown provider 直接失败。
+  return provider === PLATFORM_NATIVE_ASR_PROVIDER ? PLATFORM_NATIVE_ASR_AUDIO_FALLBACK_PROVIDER : provider;
 }
 
 function getTtsProvider(connection) {
   return connection?.voiceModelConfig?.selfhosted?.ttsProvider ?? "local-cosyvoice";
+}
+
+/**
+ * Re-apply the client's explicit modelOverrides on top of a refreshed admin
+ * config, so a session keeps the exact providers it said "ready" with
+ * (voice consistency: greeting and later turns must use the same TTS).
+ */
+function mergeClientModelOverrides(resolvedConfig, overrides) {
+  if (!overrides || typeof overrides !== "object") {
+    return resolvedConfig;
+  }
+  const selfhosted = {};
+  for (const key of [
+    "asrProvider",
+    "platformNativeAsrLocale",
+    "ttsProvider",
+    "siliconflowTtsVoice",
+    "whisperModel",
+    "deepseekModel",
+    "cosyvoiceModelKey",
+  ]) {
+    if (typeof overrides[key] === "string" && overrides[key].trim()) {
+      selfhosted[key] = overrides[key].trim();
+    }
+  }
+  return {
+    ...resolvedConfig,
+    selfhosted: { ...resolvedConfig.selfhosted, ...selfhosted },
+  };
 }
 
 function getSiliconFlowTtsVoice(connection) {
@@ -623,6 +778,15 @@ function createConversationState(config) {
   ];
 }
 
+
+function compactMessagesForRealtime(messages) {
+  if (!Array.isArray(messages) || messages.length <= 9) {
+    return messages;
+  }
+  const [systemMessage, ...turns] = messages;
+  return [systemMessage, ...turns.slice(-8)];
+}
+
 async function* streamDeepSeekReply(messages, connection) {
   if (!deepseekApiKey) {
     throw new Error("DEEPSEEK_API_KEY 未配置，无法使用 self-hosted 对话链路。");
@@ -639,7 +803,7 @@ async function* streamDeepSeekReply(messages, connection) {
       model,
       stream: true,
       temperature: 0.7,
-      max_tokens: 80,
+      max_tokens: 60,
       messages,
     }),
     signal: AbortSignal.timeout(90_000),
@@ -729,16 +893,16 @@ function mapCosyVoiceSpeed(speedRatio) {
   if (typeof speedRatio !== "number" || !Number.isFinite(speedRatio)) {
     return DEFAULT_COSYVOICE_SPEED;
   }
-  // UI 语速来自豆包预设；本地 CosyVoice 同数值听起来更快，换算后压一档。
-  return Math.min(0.95, Math.max(0.75, speedRatio * 0.85));
+  // 2026-07-11 用户反馈基础语速偏慢：取消旧的 0.85 折算，UI 预设 1:1 映射（正常=1.0）。
+  return Math.min(1.3, Math.max(0.8, speedRatio));
 }
 
 function mapSiliconFlowSpeed(speedRatio) {
   if (typeof speedRatio !== "number" || !Number.isFinite(speedRatio)) {
     return DEFAULT_SILICONFLOW_SPEED;
   }
-  // UI 语速预设面向豆包；SiliconFlow 同数值偏快，换算后整体压一档。
-  return Math.min(1.1, Math.max(0.7, speedRatio * 0.82));
+  // 2026-07-11 用户反馈基础语速偏慢：取消旧的 0.82 折算，UI 预设 1:1 映射（正常=1.0）。
+  return Math.min(1.3, Math.max(0.8, speedRatio));
 }
 
 async function synthesizeWithLocalCosyVoice(text, connection, timer, onPcmChunk) {
@@ -862,22 +1026,167 @@ async function synthesizeReply(text, connection, timer, onPcmChunk) {
   throw new Error(`未知 TTS 提供方「${provider}」，请在管理后台重新选择。`);
 }
 
-async function synthesizeWholeReplyToSocket({ socket, connection, timer, isTurnCurrent, text }) {
-  const pcmBatcher = createPcmSocketBatcher(socket);
-  timer?.mark("tts-whole-reply", { provider: "local-cosyvoice", chars: text.length });
+// ---------------------------------------------------------------------------
+// TTS PCM cache + fillers
+// ---------------------------------------------------------------------------
 
+/** insertion-ordered Map used as a tiny LRU: text -> PCM Buffer */
+const ttsPcmCache = new Map();
+
+function ttsCacheKey(connection, text) {
+  const trimmed = text.trim();
+  if (!trimmed || trimmed.length > TTS_CACHE_MAX_TEXT_CHARS) {
+    return null;
+  }
+  const provider = getTtsProvider(connection);
+  const speedRatio = connection?.config?.speedRatio;
+  if (provider === "local-cosyvoice") {
+    const voice = getLocalCosyVoiceSpkId(connection) ?? "default";
+    return `${provider}|${getCosyVoiceBaseUrl(connection)}|${voice}|${mapCosyVoiceSpeed(speedRatio)}|${trimmed}`;
+  }
+  if (isSiliconFlowTtsProvider(provider)) {
+    return `${provider}|${getSiliconFlowTtsVoice(connection)}|${mapSiliconFlowSpeed(speedRatio)}|${trimmed}`;
+  }
+  return null;
+}
+
+function ttsCacheStore(key, buffer) {
+  if (!key || !buffer?.length) {
+    return;
+  }
+  ttsPcmCache.delete(key);
+  ttsPcmCache.set(key, buffer);
+  while (ttsPcmCache.size > TTS_CACHE_MAX_ENTRIES) {
+    ttsPcmCache.delete(ttsPcmCache.keys().next().value);
+  }
+}
+
+/**
+ * synthesizeReply with a read-through PCM cache. Short repeated lines
+ * ("Great!", greetings, fillers) skip the 1~3s TTS first-packet cost entirely.
+ */
+async function synthesizeReplyCached(text, connection, timer, onPcmChunk) {
+  const key = ttsCacheKey(connection, text);
+  if (key) {
+    const hit = ttsPcmCache.get(key);
+    if (hit) {
+      ttsPcmCache.delete(key);
+      ttsPcmCache.set(key, hit);
+      timer?.mark("tts-cache-hit", { chars: text.trim().length, audioBytes: hit.length });
+      if (onPcmChunk) {
+        onPcmChunk(hit);
+        return null;
+      }
+      return hit;
+    }
+  }
+
+  if (!key) {
+    return synthesizeReply(text, connection, timer, onPcmChunk);
+  }
+
+  if (!onPcmChunk) {
+    const buffer = await synthesizeReply(text, connection, timer, null);
+    ttsCacheStore(key, buffer);
+    return buffer;
+  }
+
+  const collected = [];
   await synthesizeReply(text, connection, timer, (chunk) => {
+    collected.push(chunk);
+    onPcmChunk(chunk);
+  });
+  ttsCacheStore(key, Buffer.concat(collected));
+  return null;
+}
+
+function pickCachedFiller(connection) {
+  const candidates = [];
+  for (const text of TTS_FILLER_TEXTS) {
+    const key = ttsCacheKey(connection, text);
+    const hit = key ? ttsPcmCache.get(key) : null;
+    if (hit) {
+      candidates.push(hit);
+    }
+  }
+  if (candidates.length === 0) {
+    return null;
+  }
+  return candidates[Math.floor(Math.random() * candidates.length)];
+}
+
+/**
+ * Pre-synthesize fillers for this session's voice/speed only when it will not
+ * hurt the first real reply. Cloud TTS warmup is opt-in because a cold filler
+ * request can occupy the provider queue for several seconds.
+ */
+async function warmupTtsForConnection(connection) {
+  const provider = getTtsProvider(connection);
+  const shouldWarmup =
+    TTS_WARMUP_ENABLED ||
+    FILLER_DELAY_MS > 0 ||
+    provider === "local-cosyvoice";
+
+  if (!shouldWarmup) {
+    return;
+  }
+
+  for (const text of TTS_FILLER_TEXTS) {
+    try {
+      await synthesizeReplyCached(text, connection, null, null);
+    } catch (error) {
+      console.warn(
+        "[selfhosted-voice] tts warmup skipped:",
+        error instanceof Error ? error.message : String(error),
+      );
+      return;
+    }
+  }
+}
+
+/**
+ * Plays a cached filler ("Hmm.") if the real reply audio has not started
+ * within FILLER_DELAY_MS — a 1s "thinking" beat feels natural, dead silence
+ * does not. Padded with silence so it clears the client's prime buffer.
+ */
+function createFillerGuard({ socket, connection, timer, isTurnCurrent }) {
+  if (!FILLER_DELAY_MS) {
+    return { cancel() {}, takeLead: () => null };
+  }
+  let fillerSent = false;
+  const timerId = setTimeout(() => {
     if (isTurnCurrent && !isTurnCurrent()) {
       return;
     }
-    pcmBatcher.push(chunk);
-  });
+    if (socket.readyState !== WebSocket.OPEN) {
+      return;
+    }
+    const pcm = pickCachedFiller(connection);
+    if (!pcm) {
+      return;
+    }
+    const targetBytes = Math.floor((OUTPUT_SAMPLE_RATE * 2 * FILLER_TOTAL_MS) / 1000) & ~1;
+    const padBytes = Math.max(0, targetBytes - pcm.length) & ~1;
+    fillerSent = true;
+    timer?.mark("filler-audio", { audioBytes: pcm.length + padBytes });
+    socket.send(padBytes > 0 ? Buffer.concat([pcm, Buffer.alloc(padBytes)]) : pcm, { binary: true });
+  }, FILLER_DELAY_MS);
 
-  if (isTurnCurrent && !isTurnCurrent()) {
-    return;
-  }
-  pcmBatcher.flush();
-  timer?.mark("audio-sent");
+  return {
+    cancel() {
+      clearTimeout(timerId);
+    },
+    /** Call right before the first real audio bytes; returns lead-in silence if a filler already played. */
+    takeLead() {
+      clearTimeout(timerId);
+      if (!fillerSent) {
+        return null;
+      }
+      fillerSent = false;
+      const gapBytes = Math.floor((OUTPUT_SAMPLE_RATE * 2 * 150) / 1000) & ~1;
+      return Buffer.alloc(gapBytes);
+    },
+  };
 }
 
 async function handleBotTurn({ socket, connection, userText, timer, isTurnCurrent }) {
@@ -891,83 +1200,85 @@ async function handleBotTurn({ socket, connection, userText, timer, isTurnCurren
   connection.messages.push({ role: "user", content: userText });
 
   timer?.mark("deepseek-start");
-  let fullReply = "";
-  let sawFirstToken = false;
-  const ttsProvider = getTtsProvider(connection);
-  const shouldStreamTtsDuringGeneration = ttsProvider !== "local-cosyvoice";
-  let spokenCharOffset = 0;
-  const ttsQueue = shouldStreamTtsDuringGeneration
-    ? createStreamingTtsQueue({ socket, connection, timer, isTurnCurrent })
-    : null;
+  const fillerGuard = createFillerGuard({ socket, connection, timer, isTurnCurrent });
 
-  const drainNewSpeakableUnits = () => {
-    if (!ttsQueue) {
-      return;
-    }
-    const { units, nextIndex } = drainSpeakableUnits(fullReply, spokenCharOffset);
-    for (const unit of units) {
-      ttsQueue.enqueue(unit);
-    }
-    spokenCharOffset = nextIndex;
-  };
+  try {
+    let fullReply = "";
+    let sawFirstToken = false;
+    let spokenCharOffset = 0;
+    const ttsQueue = createStreamingTtsQueue({ socket, connection, timer, isTurnCurrent, fillerGuard });
 
-  for await (const delta of streamDeepSeekReply(connection.messages, connection)) {
+    const drainNewSpeakableUnits = () => {
+      const { units, nextIndex } = drainSpeakableUnits(fullReply, spokenCharOffset);
+      for (const unit of units) {
+        ttsQueue.enqueue(unit);
+      }
+      spokenCharOffset = nextIndex;
+    };
+
+    for await (const delta of streamDeepSeekReply(compactMessagesForRealtime(connection.messages), connection)) {
+      if (isTurnCurrent && !isTurnCurrent()) {
+        return;
+      }
+      if (!sawFirstToken) {
+        sawFirstToken = true;
+        timer?.mark("deepseek-first-token");
+      }
+      fullReply += delta;
+      emitSocketJson(socket, {
+        type: "bot-message",
+        text: fullReply,
+        isFinal: false,
+      });
+      drainNewSpeakableUnits();
+
+      // 首句抢跑加强：第一批 TTS 还没起跑时不等句号，
+      // 在从句标点/词边界提前切一段先送 TTS（详见 findEarlyFirstCut 注释）
+      if (ttsQueue.batches === 0) {
+        const pendingText = fullReply.slice(spokenCharOffset);
+        const cut = findEarlyFirstCut(pendingText);
+        if (cut > 0) {
+          ttsQueue.enqueueNow(pendingText.slice(0, cut));
+          spokenCharOffset += cut;
+        }
+      }
+    }
+
     if (isTurnCurrent && !isTurnCurrent()) {
       return;
     }
-    if (!sawFirstToken) {
-      sawFirstToken = true;
-      timer?.mark("deepseek-first-token");
+
+    const finalText = fullReply.trim();
+    if (!finalText) {
+      throw new Error("DeepSeek 没有返回可用回复。");
     }
-    fullReply += delta;
+
+    timer?.mark("deepseek-done", { chars: finalText.length });
+
     emitSocketJson(socket, {
       type: "bot-message",
-      text: fullReply,
-      isFinal: false,
+      text: finalText,
+      isFinal: true,
     });
-    drainNewSpeakableUnits();
+
+    connection.messages.push({ role: "assistant", content: finalText });
+
+    const promptChars = connection.messages
+      .slice(0, -1)
+      .map((message) => String(message.content ?? ""))
+      .join("\n");
+    connection.usage.deepseekTokens += estimateDeepseekTokens(`${promptChars}\n${finalText}`);
+
+    // 没有终止标点的尾巴由 remainder 覆盖；已攒未说的句子由 flush 兜底，不要再整段重复入队。
+    const remainder = fullReply.slice(spokenCharOffset).trim();
+    if (remainder) {
+      ttsQueue.enqueue(remainder);
+    }
+
+    await ttsQueue.flush();
+  } finally {
+    fillerGuard.cancel();
   }
-
-  if (isTurnCurrent && !isTurnCurrent()) {
-    return;
-  }
-
-  const finalText = fullReply.trim();
-  if (!finalText) {
-    throw new Error("DeepSeek 没有返回可用回复。");
-  }
-
-  timer?.mark("deepseek-done", { chars: finalText.length });
-
-  emitSocketJson(socket, {
-    type: "bot-message",
-    text: finalText,
-    isFinal: true,
-  });
-
-  connection.messages.push({ role: "assistant", content: finalText });
-
-  const promptChars = connection.messages
-    .slice(0, -1)
-    .map((message) => String(message.content ?? ""))
-    .join("\n");
-  connection.usage.deepseekTokens += estimateDeepseekTokens(`${promptChars}\n${finalText}`);
-
-  if (!ttsQueue) {
-    // Local CosyVoice has a noticeable fixed first-packet cost per request.
-    // For short live-coach replies, one full-reply synthesis is smoother than
-    // sentence-level prefetching, which can create audible gaps between chunks.
-    await synthesizeWholeReplyToSocket({ socket, connection, timer, isTurnCurrent, text: finalText });
-    return;
-  }
-
-  // 没有终止标点的尾巴由 remainder 覆盖；已攒未说的句子由 flush 兜底，不要再整段重复入队。
-  const remainder = fullReply.slice(spokenCharOffset).trim();
-  if (remainder) {
-    ttsQueue.enqueue(remainder);
-  }
-
-  await ttsQueue.flush();
 }
 
 async function handleAudioTurn({ socket, connection, chunks, turnEpoch }) {
@@ -1016,6 +1327,30 @@ async function handleAudioTurn({ socket, connection, chunks, turnEpoch }) {
 function serializeProcessing(connection, task) {
   connection.processing = connection.processing.catch(() => undefined).then(task);
   return connection.processing;
+}
+
+/**
+ * 反悔合并：撤掉上一轮 user 问句（及其 assistant 回复，若已生成），
+ * 让合并后的完整句子重新提问。
+ * 安全护栏：只有当上一条 user 内容确实是本次完整句的前缀时才回退，
+ * 防止竞态下误删更早的正常轮次。
+ */
+function rewindLastTextTurn(connection, amendText) {
+  const messages = connection.messages;
+  let userIndex = messages.length - 1;
+  if (userIndex >= 0 && messages[userIndex].role === "assistant") {
+    userIndex -= 1;
+  }
+  if (userIndex < 0 || messages[userIndex].role !== "user") {
+    return false;
+  }
+  const previousUserText = String(messages[userIndex].content ?? "").trim().toLowerCase();
+  const mergedText = amendText.trim().toLowerCase();
+  if (!previousUserText || !mergedText.startsWith(previousUserText)) {
+    return false;
+  }
+  messages.splice(userIndex);
+  return true;
 }
 
 const httpServer = createServer(async (req, res) => {
@@ -1069,7 +1404,18 @@ const httpServer = createServer(async (req, res) => {
   sendJson(res, 404, { error: "Not found" });
 });
 
-const wss = new WebSocketServer({ server: httpServer, path: WS_PATH });
+const wss = new WebSocketServer({
+  server: httpServer,
+  path: WS_PATH,
+  verifyClient: ({ origin }, callback) => {
+    if (isOriginAllowed(origin)) {
+      callback(true);
+      return;
+    }
+    console.warn("[selfhosted-voice] rejected connection from origin:", origin || "(missing)");
+    callback(false, 403, "Origin not allowed");
+  },
+});
 
 wss.on("connection", async (socket, request) => {
   const requestUrl = new URL(request.url || WS_PATH, `http://${request.headers.host || "localhost"}`);
@@ -1123,13 +1469,22 @@ wss.on("connection", async (socket, request) => {
           sessionId: config.sessionId,
           sampleRate: OUTPUT_SAMPLE_RATE,
         });
+        // Optional TTS warmup/filler prebuild; cloud providers are skipped by default to avoid first-turn queue contention.
+        void warmupTtsForConnection(connection);
       };
 
-      const refreshSessionConfig = () => {
+      const refreshSessionConfig = (clientOverrides) => {
         void resolveSessionVoiceConfig(supabaseClient, config)
           .then((resolved) => {
             if (resolved.backend === "selfhosted" && connection.initialized) {
-              connection.voiceModelConfig = resolved.config;
+              // 客户端显式传的 overrides 必须继续生效（例如前端会把
+              // siliconflow-cosyvoice 换成低延迟 MOSS-TTSD）。此前这里整个
+              // 覆盖 voiceModelConfig，导致开场白用 override 音色、刷新完成后
+              // 的对话又换回后台配置音色——首句和后续音色不一致。
+              connection.voiceModelConfig = mergeClientModelOverrides(
+                resolved.config,
+                clientOverrides,
+              );
             }
           })
           .catch(() => {
@@ -1139,7 +1494,7 @@ wss.on("connection", async (socket, request) => {
 
       if (message.modelOverrides && typeof message.modelOverrides === "object") {
         applyReady(configFromModelOverrides(message.modelOverrides));
-        refreshSessionConfig();
+        refreshSessionConfig(message.modelOverrides);
         return;
       }
 
@@ -1206,14 +1561,29 @@ wss.on("connection", async (socket, request) => {
       if (!text) {
         return;
       }
+      const isAmend = message.amend === true;
+      // 每个 text 回合有自己的 epoch：新查询到达即作废还在跑的旧回合
+      //（反悔合并撤销半句回复；快速连说两句时也只回答最新一句）。
+      connection.textTurnEpoch = (connection.textTurnEpoch ?? 0) + 1;
+      const textTurnEpoch = connection.textTurnEpoch;
+      const isTurnCurrent = () => connection.textTurnEpoch === textTurnEpoch;
       void serializeProcessing(connection, async () => {
-        const timer = createTurnTimer("text-turn");
+        if (!isTurnCurrent()) {
+          return;
+        }
+        if (isAmend) {
+          rewindLastTextTurn(connection, text);
+        }
+        const timer = createTurnTimer(isAmend ? "text-turn-amend" : "text-turn");
         timer.mark("turn-start");
         try {
-          await handleBotTurn({ socket, connection, userText: text, timer });
+          await handleBotTurn({ socket, connection, userText: text, timer, isTurnCurrent });
           timer.finish("text-turn-complete");
         } catch (error) {
           timer.finish("text-turn-failed");
+          if (!isTurnCurrent()) {
+            return;
+          }
           emitSocketJson(socket, {
             type: "error",
             message: error instanceof Error ? error.message : String(error),
@@ -1239,7 +1609,7 @@ wss.on("connection", async (socket, request) => {
           });
           connection.messages.push({ role: "assistant", content: text });
           const pcmBatcher = createPcmSocketBatcher(socket);
-          await synthesizeReply(text, connection, timer, pcmBatcher.push);
+          await synthesizeReplyCached(text, connection, timer, pcmBatcher.push);
           pcmBatcher.flush();
           timer.mark("audio-sent");
           timer.finish("say-hello-complete");
@@ -1260,8 +1630,13 @@ wss.on("connection", async (socket, request) => {
 });
 
 httpServer.on("listening", () => {
-  const bind = process.env.SELFHOSTED_VOICE_PORT ? "0.0.0.0" : "localhost";
+  const bind = IS_CLOUD_BIND ? "0.0.0.0" : "localhost";
   console.log(`[selfhosted-voice] listening on ${bind}:${PORT}`);
+  if (allowedOrigins.length > 0) {
+    console.log("[selfhosted-voice] allowed origins:", allowedOrigins.join(", "));
+  } else {
+    console.warn("[selfhosted-voice] ALLOWED_ORIGINS not set — accepting all origins");
+  }
 });
 
 httpServer.on("error", (error) => {
@@ -1274,4 +1649,4 @@ httpServer.on("error", (error) => {
 });
 
 void startupHealthCheck();
-httpServer.listen(PORT, process.env.SELFHOSTED_VOICE_PORT ? "0.0.0.0" : undefined);
+httpServer.listen(PORT, IS_CLOUD_BIND ? "0.0.0.0" : undefined);

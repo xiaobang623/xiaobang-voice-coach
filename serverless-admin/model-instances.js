@@ -1,7 +1,7 @@
-import { requireAdmin } from "../_lib/admin-auth.js";
-import { setJsonCors, json } from "../_lib/http.js";
-import { listInstanceKeys, parseModelInstances } from "../_lib/voice-config.js";
-import { resolveSiliconFlowApiKey, siliconFlowConfigStatus } from "../_lib/siliconflow-voice.js";
+import { requireAdmin } from "../api/_lib/admin-auth.js";
+import { setJsonCors, json } from "../api/_lib/http.js";
+import { listInstanceKeys, parseModelInstances } from "../api/_lib/voice-config.js";
+import { resolveSiliconFlowApiKey, siliconFlowConfigStatus } from "../api/_lib/siliconflow-voice.js";
 
 async function fetchHealth(url) {
   try {
