@@ -8,8 +8,16 @@ export const TASK_SCENARIOS: TaskScenario[] = [
     category: "life",
     title: "点一杯咖啡",
     description: "在咖啡店完成点单全流程",
-    openingHint: "小榜会先扮演咖啡店店员招呼你，你用英文完成点单",
+    openingHint: "你先开口点单，小榜会进入咖啡店店员的角色跟你演",
     greeting: "Hi there, welcome in! What would you like to order today?",
+    directions: [
+      { zh: "打个招呼，点你想喝的", en: "Hi, can I get..." },
+      { zh: "问店员今天推荐什么", en: "What do you recommend?" },
+      { zh: "先要一份菜单看看", en: "Could I see the menu?" },
+      { zh: "问有没有无咖啡因的", en: "anything decaf?" },
+      { zh: "问今天有没有特价", en: "any specials today?" },
+      { zh: "犹豫一下，让店员帮你选", en: "I can't decide..." },
+    ],
     roleSetup:
       "You are a friendly café barista. The user is a customer who just walked up to order a drink. Greet them naturally and stay in character as a barista throughout.",
     goals: [
@@ -39,8 +47,16 @@ export const TASK_SCENARIOS: TaskScenario[] = [
     category: "work",
     title: "AI PM 英文面试",
     description: "模拟求职面试，练 STAR 和追问应对",
-    openingHint: "小榜会先扮演面试官开场，你用英文做自我介绍",
+    openingHint: "你先开口打招呼，小榜会进入面试官的角色跟你演",
     greeting: "Hi, nice to meet you. Could you start by introducing yourself?",
+    directions: [
+      { zh: "打招呼，做个简短自我介绍", en: "Hi, nice to meet you. I'm..." },
+      { zh: "问要不要先讲自己的背景", en: "should I start with my background?" },
+      { zh: "说说你为什么想做这个岗位", en: "the reason I'm interested in this role..." },
+      { zh: "简单聊聊你现在的工作", en: "in my current role, I..." },
+      { zh: "表达一下面试的心情", en: "I'm excited to be here" },
+      { zh: "用一句话概括你自己", en: "in one sentence, I'm..." },
+    ],
     roleSetup:
       "You are an interviewer for an AI Product Manager role at a tech company. Conduct a realistic job interview in English. Stay in character as the interviewer throughout.",
     goals: [

@@ -1,8 +1,16 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { ReportJSON, SessionSettings, TaskScenario, TopicOption, VoiceOption } from "../types";
+import type {
+  ReportJSON,
+  SessionSettings,
+  TalkDirection,
+  TaskScenario,
+  TopicOption,
+  VoiceOption,
+} from "../types";
 import type { UseVoiceSessionResult } from "../hooks/useVoiceSession";
 import { SPEED_OPTIONS } from "../config/session";
+import { FREE_TALK_DIRECTIONS, pickDirections } from "../config/chatTopics";
 import { isTypingTestAvailable } from "../config/features";
 import { TaskCard } from "./TaskCard";
 import { TaskChecklist } from "./TaskChecklist";
@@ -12,23 +20,11 @@ import { KeyboardIcon, SlidersIcon, SpeakerIcon } from "./ui/icons";
 import { Mascot, type MascotExpression } from "./ui/Mascot";
 import { VoiceAvatar } from "./ui/VoiceAvatar";
 
-const FREE_TALK_GREETING = "Hey, good to see you! What would you like to talk about today?";
-
 function formatElapsed(startedAt: number, now: number): string {
   const totalSeconds = Math.max(0, Math.floor((now - startedAt) / 1000));
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
-}
-
-function getOpeningGreeting(activeTask?: TaskScenario | null, activeTopic?: TopicOption | null): string {
-  if (activeTask?.greeting) {
-    return activeTask.greeting;
-  }
-  if (activeTopic?.greeting) {
-    return activeTopic.greeting;
-  }
-  return FREE_TALK_GREETING;
 }
 
 function MicIcon({ className }: { className?: string }) {
@@ -346,13 +342,77 @@ function SessionGuideBanner({
   );
 }
 
+const OPENING_GUIDE_DIRECTION_COUNT = 3;
+
+function SessionOpeningGuide({
+  activeTopic,
+  activeTask,
+}: {
+  activeTopic?: TopicOption | null;
+  activeTask?: TaskScenario | null;
+}) {
+  const pool =
+    (activeTask?.directions?.length ? activeTask.directions : undefined) ??
+    (activeTopic?.directions?.length ? activeTopic.directions : undefined) ??
+    FREE_TALK_DIRECTIONS;
+  const [shown, setShown] = useState<TalkDirection[]>(() =>
+    pickDirections(pool, OPENING_GUIDE_DIRECTION_COUNT),
+  );
+  const hint = activeTask?.openingHint ?? activeTopic?.openingHint;
+
+  return (
+    <li className="animate-fade-up flex w-full items-start gap-2.5">
+      <div className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent-soft ring-2 ring-surface">
+        <Mascot expression="idle" size={32} bob={false} className="translate-y-[1px]" />
+      </div>
+      <div className="min-w-0 flex-1 rounded-[18px] rounded-bl-md border border-white/10 bg-surface-canvas-raised px-4 py-3">
+        <p className="text-[13px] font-medium text-ink-on-canvas">小榜在听，先开口说一句就行 👂</p>
+        {hint ? (
+          <p className="mt-1 text-[12.5px] leading-relaxed text-ink-on-canvas-faint">{hint}</p>
+        ) : null}
+        <div className="mt-2.5 flex flex-col gap-1.5">
+          {shown.map((direction) => (
+            <div
+              key={direction.zh}
+              className="flex flex-wrap items-baseline gap-x-2 rounded-[14px] border border-dashed border-accent-muted bg-surface/70 px-3 py-2"
+            >
+              <span className="text-[14px] leading-snug text-ink-on-canvas">{direction.zh}</span>
+              {direction.en ? (
+                <span className="text-[12px] italic leading-snug text-ink-on-canvas-faint">
+                  {direction.en}
+                </span>
+              ) : null}
+            </div>
+          ))}
+        </div>
+        <div className="mt-2 flex items-center justify-between gap-2">
+          <p className="text-[11.5px] text-ink-on-canvas-faint">
+            {activeTask
+              ? "挑个方向开口说一句，小榜会进入角色接住你"
+              : "挑个方向用英文随便说一句，说错也没关系"}
+          </p>
+          <button
+            type="button"
+            onClick={() =>
+              setShown((current) => pickDirections(pool, OPENING_GUIDE_DIRECTION_COUNT, current))
+            }
+            className="shrink-0 rounded-full border border-white/15 bg-[rgba(244,243,240,0.08)] px-2.5 py-1 text-[11px] text-ink-on-canvas-soft transition hover:text-ink-on-canvas"
+          >
+            🎲 换一批
+          </button>
+        </div>
+      </div>
+    </li>
+  );
+}
+
 function CoachAvatar({ status }: { status: "connecting" | "active" | "ended" }) {
   const expression: MascotExpression =
     status === "connecting" ? "thinking" : status === "active" ? "talking" : "idle";
 
   return (
-    <div className="relative flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-accent-soft ring-2 ring-surface">
-      <Mascot expression={expression} size={34} bob={false} />
+    <div className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent-soft ring-2 ring-surface">
+      <Mascot expression={expression} size={32} bob={false} className="translate-y-[1px]" />
     </div>
   );
 }
@@ -455,7 +515,7 @@ export function VoiceSession({
       voiceType: voiceTypeRef.current,
       speedRatio: speedRatioRef.current,
       systemPrompt: settings.systemPrompt,
-      initialGreeting: hasHistory ? undefined : getOpeningGreeting(activeTask, activeTopic),
+      // Coach no longer auto-opens; the user speaks first (see SessionOpeningGuide).
       typingTestMode: isTypingTestAvailable() && typingTestMode,
     });
   }, [
@@ -464,9 +524,6 @@ export function VoiceSession({
     usageUserId,
     usageGuestId,
     settings.systemPrompt,
-    hasHistory,
-    activeTask,
-    activeTopic,
     typingTestMode,
   ]);
 
@@ -539,19 +596,19 @@ export function VoiceSession({
 
   const emptyHint = (() => {
     if (isActive) {
-      if (activeAsrProvider === "platform-native-asr") {
-        return "平台原生 ASR 已开启，说话会实时转成文字";
-      }
       if (typingTestMode) {
         return "打字测试模式 · 在底部输入英文发送";
       }
-      if (activeTask) {
-        return "听完小榜开场，用一句英文接住任务";
+      if (!userHasSpoken) {
+        if (activeTask) {
+          return "你先开口，照着上面的起手句说，小榜会进入角色";
+        }
+        return "小榜在听 · 照着上面的起手句先说一句";
       }
-      if (activeTopic) {
-        return "听完小榜开场，用一句英文接着聊";
+      if (activeAsrProvider === "platform-native-asr") {
+        return "平台原生 ASR 已开启，说话会实时转成文字";
       }
-      return "小榜会先开口，你跟着回答就好";
+      return "小榜在听 · 随时接着说";
     }
     if (hasHistory) {
       return typingTestMode
@@ -574,6 +631,8 @@ export function VoiceSession({
     activeTask && !taskCardDismissed && messages.length === 0 && !report;
   const showTaskChecklist = activeTask && taskCardDismissed && !report;
   const showGuideBanner = isActive && userHasSpoken && !errorMessage && !report;
+  const showOpeningGuide =
+    isActive && !userHasSpoken && !errorMessage && !report && !showTaskCard && !typingTestMode;
 
   return (
     <section className="animate-fade-up flex min-h-0 h-full w-full flex-1 flex-col overflow-hidden bg-bg-canvas text-ink-on-canvas md:mx-auto md:max-w-[40rem] md:rounded-[24px] md:border md:border-white/10">
@@ -710,6 +769,10 @@ export function VoiceSession({
             <li>
               <TaskChecklist goals={activeTask.goals} title={activeTask.title} />
             </li>
+          ) : null}
+
+          {showOpeningGuide ? (
+            <SessionOpeningGuide activeTopic={activeTopic} activeTask={activeTask} />
           ) : null}
 
           {showGuideBanner ? <SessionGuideBanner activeTask={activeTask} /> : null}

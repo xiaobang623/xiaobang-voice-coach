@@ -1,13 +1,35 @@
 export type PracticeMode = "chat" | "task";
 
+/** A rough talking direction shown on the opening guide card. Gives the user a direction, not a full sentence. */
+export interface TalkDirection {
+  /** 中文方向，一眼知道可以聊什么。 */
+  zh: string;
+  /** 可借用的英文词块/片段，帮用户起步（可选）。 */
+  en?: string;
+}
+
 export interface TopicOption {
   id: string;
   title: string;
   description: string;
   /** Shown in the chat screen so the user knows what to expect after picking a topic. */
   openingHint?: string;
-  /** Spoken aloud by the Coach right after connecting, so the Coach opens the conversation. */
+  /**
+   * @deprecated Coach no longer auto-opens. Kept for a possible future Coach-first A/B.
+   * Spoken aloud by the Coach right after connecting when explicitly passed as initialGreeting.
+   */
   greeting?: string;
+  /**
+   * @deprecated Replaced by `directions` (2026-07-13): full canned sentences felt low-quality
+   * and repetitive. Kept for a possible future "read-aloud" mode.
+   */
+  starters?: string[];
+  /**
+   * Pool of rough talking directions (aim for 6–8). The opening guide card randomly
+   * shows 3 per session so returning users see fresh prompts. Directions only —
+   * the user forms their own English sentence.
+   */
+  directions?: TalkDirection[];
   /**
    * English guidance appended to the Coach's system_role so the opening line
    * actually sticks to the chosen topic. "" / undefined = free talk.

@@ -19,17 +19,21 @@ export interface PlatformNativeAsrOptions {
 }
 
 /** 只有 interim（浏览器还没断句）时，静默多久后提交整轮文本。 */
-const INTERIM_COMMIT_DELAY_MS = 550;
+const INTERIM_COMMIT_DELAY_MS = 480;
 /**
  * 浏览器已给出 final 片段后，再等一小段时间才提交：
  * 用户句中停顿时浏览器常提前断句，这个窗口用来把「一次开口」合并成一个气泡。
+ * 07-13 从 240ms 微抬到 300ms：420/240 被用户反馈「断句稍微有点快」，
+ * 回抬一点点找手感（仍比放松前的 550/280 更快）。
  */
-const FINAL_COMMIT_DELAY_MS = 280;
+const FINAL_COMMIT_DELAY_MS = 300;
 /**
  * 语义判停（本地启发式，零成本）：文本结尾看起来「话没说完」时，
- * 把提交窗口拉长到这个值，容忍学习者句中想词的停顿（通常 1~3s）。
+ * 把提交窗口拉长到这个值，容忍学习者句中想词的停顿。
+ * 07-13 从 1000ms 收到 700ms：整 1 秒的等待让对话「端着不接」，不像真人；
+ * 判早了有反悔合并（onAmend）兜底，宁可偏向「敢接话」。
  */
-const INCOMPLETE_COMMIT_DELAY_MS = 1000;
+const INCOMPLETE_COMMIT_DELAY_MS = 700;
 /** 同一段识别 run 内，浏览器把已提交文本连同新内容重新吐 final 的去重窗口。 */
 const PREFIX_DEDUPE_WINDOW_MS = 10_000;
 const DEFAULT_PLATFORM_NATIVE_ASR_LOCALE = "en-US";
@@ -72,7 +76,14 @@ const COMPLETE_SHORT_UTTERANCES = new Set([
   "goodbye", "morning", "fine", "good", "great", "nice", "nothing", "sorry",
 ]);
 
-/** 纯本地启发式：这段话看起来说完了吗？ */
+/**
+ * 纯本地启发式：这段话看起来说完了吗？
+ *
+ * 07-13 放松：默认认为「说完了」（快速提交），只有结尾是明显的功能词
+ *（连接词/介词/冠词/助动词/主语代词/填充词）才判「没说完」拉长等待。
+ * 旧逻辑对「任何 1~2 词、不在白名单的短句」都判没说完等满 1s，太严格、
+ * 不像对话——现在短句默认秒接，偶尔判早了由反悔合并（onAmend）兜住。
+ */
 function looksIncomplete(text: string): boolean {
   const words = text
     .toLowerCase()
@@ -84,11 +95,16 @@ function looksIncomplete(text: string): boolean {
     return true;
   }
   const lastWord = words[words.length - 1];
-  if (words.length < 3) {
-    // 一两个词：要么是完整短回答，要么大概率是起头
-    return !COMPLETE_SHORT_UTTERANCES.has(lastWord);
+  // 明确的功能词收尾 → 大概率还有下文，值得多等一会儿。
+  if (INCOMPLETE_TRAILING_WORDS.has(lastWord)) {
+    return true;
   }
-  return INCOMPLETE_TRAILING_WORDS.has(lastWord);
+  // 单个词且既不是完整短回答、也不是功能词（如口误碎片）→ 稍等它接下文。
+  if (words.length === 1 && !COMPLETE_SHORT_UTTERANCES.has(lastWord)) {
+    return true;
+  }
+  // 其余（含 2 词以上的正常短句）默认已说完，快速接话。
+  return false;
 }
 
 interface SpeechRecognitionAlternativeLike {
@@ -265,7 +281,8 @@ export class BrowserPlatformNativeAsr {
       this.runId += 1;
       this.handlers.onEnd?.();
       if (this.shouldRun && !this.pausedForPlayback) {
-        window.setTimeout(() => this.safeStart(), 180);
+        // 浏览器周期性结束识别 run，重启缝隙期间的语音会丢；缝隙越短吞词越少。
+        window.setTimeout(() => this.safeStart(), 100);
       }
     };
 
@@ -323,8 +340,11 @@ export class BrowserPlatformNativeAsr {
     this.latestCombinedText = "";
     // Give the browser/audio output a short tail window so the recognizer
     // doesn't pick up the Coach's last syllables as the user's next turn.
-    window.setTimeout(() => this.safeStart(), 450);
-    window.setTimeout(() => this.safeStart(), 760);
+    // 注意：Chrome 的 recognition.start() 本身有 ~300–600ms 启动延迟，天然就是
+    // 防回声窗口的一部分；这里的等待不要和它重复计算，否则 Coach 说完后会出现
+    // 约 1 秒的「聋区」，用户紧接着开口的头几个词被吞掉（07-13 从 450/760 收紧）。
+    window.setTimeout(() => this.safeStart(), 200);
+    window.setTimeout(() => this.safeStart(), 520);
   }
 
   private safeStart(): void {
