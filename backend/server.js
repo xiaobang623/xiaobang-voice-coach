@@ -787,6 +787,45 @@ function compactMessagesForRealtime(messages) {
   return [systemMessage, ...turns.slice(-8)];
 }
 
+
+function parseDeepSeekErrorDetail(detail) {
+  const raw = String(detail ?? "").trim();
+  if (!raw) {
+    return { raw: "", code: "", message: "" };
+  }
+
+  try {
+    const payload = JSON.parse(raw);
+    const error = payload?.error ?? payload;
+    return {
+      raw,
+      code: String(error?.code ?? payload?.code ?? ""),
+      message: String(error?.message ?? payload?.message ?? raw),
+    };
+  } catch {
+    return { raw, code: "", message: raw };
+  }
+}
+
+function createDeepSeekRequestError(detail, status) {
+  const parsed = parseDeepSeekErrorDetail(detail);
+  const haystack = `${parsed.code} ${parsed.message} ${parsed.raw}`.toLowerCase();
+  const isRateLimit = status === 429 || haystack.includes("rate_limit") || haystack.includes("rate limit") || haystack.includes("session limit");
+  const isAuth = status === 401 || status === 403 || haystack.includes("invalid api key") || haystack.includes("authentication");
+
+  const userMessage = isRateLimit
+    ? "DeepSeek 当前触发限流 / 会话额度上限，请稍等到页面提示的重置时间后再试，或到 DeepSeek 控制台检查余额。"
+    : isAuth
+      ? "DeepSeek API Key 校验失败，请检查 Railway 环境变量 DEEPSEEK_API_KEY 是否与平台一致。"
+      : `DeepSeek 对话失败（HTTP ${status}）：${parsed.message || parsed.raw || "未知错误"}`;
+
+  const error = new Error(userMessage);
+  error.code = isRateLimit ? "deepseek_rate_limit" : isAuth ? "deepseek_auth_error" : "deepseek_request_failed";
+  error.status = status;
+  error.detail = parsed.raw;
+  return error;
+}
+
 async function* streamDeepSeekReply(messages, connection) {
   if (!deepseekApiKey) {
     throw new Error("DEEPSEEK_API_KEY 未配置，无法使用 self-hosted 对话链路。");
@@ -811,7 +850,7 @@ async function* streamDeepSeekReply(messages, connection) {
 
   if (!response.ok || !response.body) {
     const detail = await response.text();
-    throw new Error(`DeepSeek 对话失败: ${detail || response.status}`);
+    throw createDeepSeekRequestError(detail, response.status);
   }
 
   const decoder = new TextDecoder();
