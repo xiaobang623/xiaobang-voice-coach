@@ -6,7 +6,26 @@ import type {
   VoiceConfig,
 } from "./types";
 
-const WS_URL = import.meta.env.VITE_SELFHOSTED_VOICE_URL ?? "ws://localhost:8081/ws";
+const LOCAL_SELFHOSTED_WS_URL = "ws://localhost:8081/ws";
+const PRODUCTION_SELFHOSTED_WS_URL = "wss://selfhosted-voice-production.up.railway.app/ws";
+
+function resolveSelfHostedWsUrl(): string {
+  const configured = import.meta.env.VITE_SELFHOSTED_VOICE_URL?.trim();
+  if (configured) {
+    return configured;
+  }
+
+  // In local Vite dev, keep the developer-friendly localhost default.
+  if (import.meta.env.DEV) {
+    return LOCAL_SELFHOSTED_WS_URL;
+  }
+
+  // Production builds must never fall back to localhost: that would point at each
+  // user's own computer, where the Node/DeepSeek/TTS backend does not exist.
+  return PRODUCTION_SELFHOSTED_WS_URL;
+}
+
+const WS_URL = resolveSelfHostedWsUrl();
 const CONNECT_TIMEOUT_MS = 15_000;
 
 type AdapterEvent = "transcript" | "bot-message" | "tts-audio" | "realtime-hint" | "error";
@@ -52,7 +71,7 @@ export class SelfHostedVoiceAdapter implements VoiceAdapter {
       this.resolveConnect = resolve;
       this.rejectConnect = reject;
       this.connectTimeoutId = setTimeout(() => {
-        this.rejectConnect?.(new Error("自建语音服务连接超时，请检查 backend/server.js 是否已启动。"));
+        this.rejectConnect?.(new Error(this.buildConnectionHelpMessage("timeout")));
         this.clearConnectTimeout();
         this.isManualDisconnect = true;
         this.socket?.close();
@@ -174,6 +193,16 @@ export class SelfHostedVoiceAdapter implements VoiceAdapter {
     }
   }
 
+  private buildConnectionHelpMessage(reason: "timeout" | "local-error" | "remote-error"): string {
+    const isLocalServer = WS_URL.includes("localhost") || WS_URL.includes("127.0.0.1");
+    if (isLocalServer) {
+      return reason === "timeout"
+        ? "自建语音服务连接超时，请检查本地 backend/server.js 是否已启动。"
+        : "自建语音服务连不上，请在另一个终端运行 node backend/server.js。";
+    }
+    return `自建语音后端连接失败，请检查线上服务是否可用：${WS_URL}`;
+  }
+
   private openSocket(config: VoiceConfig): void {
     const socket = new WebSocket(this.buildSocketUrl(config));
     socket.binaryType = "arraybuffer";
@@ -223,9 +252,7 @@ export class SelfHostedVoiceAdapter implements VoiceAdapter {
       const isLocalServer = WS_URL.includes("localhost") || WS_URL.includes("127.0.0.1");
       this.emitError(
         new Error(
-          isLocalServer
-            ? "自建语音服务连不上，请在另一个终端运行 node backend/server.js。"
-            : "Self-hosted voice websocket error.",
+          this.buildConnectionHelpMessage(isLocalServer ? "local-error" : "remote-error"),
         ),
       );
     };
