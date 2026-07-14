@@ -23,6 +23,20 @@ async function readJsonBody(req) {
   return JSON.parse(raw);
 }
 
+function compactMemoryForPrompt(summary) {
+  if (!summary || typeof summary !== "object") {
+    return null;
+  }
+
+  return {
+    userLevel: summary.userLevel,
+    topics: Array.isArray(summary.topics) ? summary.topics : [],
+    frequentMistakes: Array.isArray(summary.frequentMistakes) ? summary.frequentMistakes : [],
+    coachNotes: summary.coachNotes ?? summary.notes ?? "",
+    updatedAt: summary.updatedAt,
+  };
+}
+
 export default async function handler(req, res) {
   setCorsHeaders(res);
 
@@ -53,8 +67,9 @@ export default async function handler(req, res) {
     return;
   }
 
-  const previousBlock = input.previousSummary
-    ? `Previous profile:\n${JSON.stringify(input.previousSummary, null, 2)}\n\n`
+  const compactPreviousSummary = compactMemoryForPrompt(input.previousSummary);
+  const previousBlock = compactPreviousSummary
+    ? `Previous profile:\n${JSON.stringify(compactPreviousSummary, null, 2)}\n\n`
     : "";
 
   const reportBlock = input.report
@@ -108,7 +123,13 @@ export default async function handler(req, res) {
     }
 
     const raw = JSON.parse(content);
-    res.status(200).json(postProcessMemory(raw));
+    res.status(200).json(
+      postProcessMemory(raw, {
+        report: input.report,
+        previousSummary: input.previousSummary,
+        ownerKey: input.userId ?? input.guestId ?? "memory",
+      }),
+    );
   } catch (error) {
     res.status(500).json({
       error: error instanceof Error ? error.message : "Memory extraction failed",

@@ -146,6 +146,16 @@ export interface ReportGrowth {
   talkMore: GrowthTalkMore[];
 }
 
+export interface ReportReusedExpression {
+  expressionId: string;
+  previousOriginalText: string;
+  targetText: string;
+  currentText: string;
+  statusBefore: TrackedExpressionStatus;
+  statusAfter: TrackedExpressionStatus;
+  reuseCount: number;
+}
+
 export interface ReportJSON {
   sessionId: string;
   createdAt: string;
@@ -154,10 +164,29 @@ export interface ReportJSON {
   corrections: Correction[];
   /** 口语提升包：下次这样说 / 新表达 / 还能聊什么。Absent on old reports or very short sessions. */
   growth?: ReportGrowth;
+  /** Expressions from previous sessions that the learner reused correctly this time. */
+  reusedExpressions?: ReportReusedExpression[];
   /** Present only for task-mode sessions. */
   taskResults?: TaskResult[];
   /** e.g. "2/3" — count of done goals over total. */
   taskScore?: string;
+}
+
+export type TrackedExpressionSourceType = "correction" | "sayBetter" | "newExpression";
+
+export type TrackedExpressionStatus = "unmastered" | "reviewing" | "mastered";
+
+export interface TrackedExpression {
+  id: string;
+  sourceType: TrackedExpressionSourceType;
+  originalText: string;
+  targetText: string;
+  category: string;
+  status: TrackedExpressionStatus;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  reuseCount: number;
+  nextReviewAt?: string;
 }
 
 /** Compact learner profile stored in memory.summary. */
@@ -165,6 +194,7 @@ export interface MemorySummary {
   userLevel: UserLevel;
   topics: string[];
   frequentMistakes: string[];
+  trackedExpressions: TrackedExpression[];
   coachNotes: string;
   updatedAt: string;
 }

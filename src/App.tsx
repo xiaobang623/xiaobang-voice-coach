@@ -11,6 +11,10 @@ import {
   generateReport,
 } from "./core/report";
 import { extractMemory } from "./core/memory";
+import {
+  applyTrackedExpressionReuse,
+  preserveTrackedExpressionReuse,
+} from "./core/trackedExpressionReuse";
 import { resolveUsageActor, logApiUsage } from "./core/usageLog";
 import { useVoiceSession } from "./hooks/useVoiceSession";
 import { useVoiceProfile } from "./hooks/useVoiceProfile";
@@ -31,7 +35,14 @@ import {
   buildSystemPrompt,
   buildTaskSystemPrompt,
 } from "./config/session";
-import type { GrowthPageData, MemorySummary, ReportJSON, SessionSettings, TaskScenario } from "./types";
+import type {
+  GrowthPageData,
+  MemorySummary,
+  ReportJSON,
+  ReportReusedExpression,
+  SessionSettings,
+  TaskScenario,
+} from "./types";
 
 type PracticeScreen = "topics" | "chat" | "report";
 
@@ -253,7 +264,7 @@ function App() {
 
     try {
       const taskScenario = topicId ? findTaskScenario(topicId) : undefined;
-      const nextReport = await generateReport({
+      const generatedReport = await generateReport({
         sessionId,
         transcript,
         durationSeconds: durationSeconds || 1,
@@ -261,8 +272,34 @@ function App() {
         guestId: usageActor.guestId ?? undefined,
         taskGoals: taskScenario?.goals.map((g) => ({ id: g.id, desc: g.desc })),
       });
+
+      let reportForSession: ReportJSON = generatedReport;
+      let memoryForExtraction = userMemory;
+      let reuseUpdatedMemory: MemorySummary | null = null;
+      const reusedExpressions: ReportReusedExpression[] = [];
+
+      if (!isAnonymous && userMemory) {
+        try {
+          const reuseResult = applyTrackedExpressionReuse(userMemory, transcript);
+          if (reuseResult.reusedExpressions.length > 0) {
+            reuseUpdatedMemory = reuseResult.summary;
+            memoryForExtraction = reuseResult.summary;
+            reusedExpressions.push(...reuseResult.reusedExpressions);
+            reportForSession = {
+              ...generatedReport,
+              reusedExpressions: reuseResult.reusedExpressions,
+            };
+          }
+        } catch (reuseError) {
+          console.warn(
+            "[memory] tracked expression reuse matching failed:",
+            reuseError instanceof Error ? reuseError.message : reuseError,
+          );
+        }
+      }
+
       if (isCurrentRun()) {
-        setReport(nextReport);
+        setReport(reportForSession);
       }
 
       if (!isAnonymous) {
@@ -271,7 +308,7 @@ function App() {
           topic: topicId,
           transcript,
           durationSeconds,
-          report: nextReport,
+          report: reportForSession,
         });
 
         if (userId) {
@@ -283,14 +320,19 @@ function App() {
         }
 
         try {
-          const nextMemory = await extractMemory({
+          const extractedMemory = await extractMemory({
             transcript,
-            report: nextReport,
-            previousSummary: userMemory,
+            report: reportForSession,
+            previousSummary: memoryForExtraction,
             userId: usageActor.userId ?? undefined,
             guestId: usageActor.guestId ?? undefined,
             sessionId,
           });
+          const nextMemory = preserveTrackedExpressionReuse(
+            extractedMemory,
+            reuseUpdatedMemory,
+            reusedExpressions,
+          );
           await upsertUserMemory(nextMemory);
           setUserMemory(nextMemory);
         } catch (memoryError) {
@@ -298,6 +340,10 @@ function App() {
             "[memory] extraction failed:",
             memoryError instanceof Error ? memoryError.message : memoryError,
           );
+          if (reuseUpdatedMemory) {
+            await upsertUserMemory(reuseUpdatedMemory);
+            setUserMemory(reuseUpdatedMemory);
+          }
         }
       } else if (usageActor.guestId) {
         await persistGuestSessionReport({
@@ -306,7 +352,7 @@ function App() {
           topic: topicId,
           transcript,
           durationSeconds,
-          report: nextReport,
+          report: reportForSession,
         });
       }
     } catch (error) {

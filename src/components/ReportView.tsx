@@ -4,6 +4,7 @@ import type {
   CorrectionType,
   ReportGrowth,
   ReportJSON,
+  ReportReusedExpression,
   TaskGoal,
   TaskGoalStatus,
 } from "../types";
@@ -315,6 +316,42 @@ function GrowthSection({ growth }: { growth: ReportGrowth }) {
   );
 }
 
+function ReusedExpressionsSection({ items }: { items: ReportReusedExpression[] }) {
+  if (items.length === 0) {
+    return null;
+  }
+
+  return (
+    <div>
+      <p className="eyebrow">你把上次学的用出来了</p>
+      <ul className="mt-4 space-y-3">
+        {items.map((item) => (
+          <li key={item.expressionId}>
+            <Card variant="default" className="p-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge tone={item.statusAfter === "mastered" ? "accent" : "default"}>
+                  {item.statusAfter === "mastered" ? "已掌握" : `已复用 ${item.reuseCount} 次`}
+                </Badge>
+              </div>
+              <p className="mt-3 text-[13.5px] text-text-muted">
+                上次：{item.previousOriginalText || item.targetText}
+              </p>
+              <p className="mt-1.5 text-[15px] font-semibold leading-snug text-accent-teal">
+                这次：{item.currentText}
+              </p>
+              {item.previousOriginalText && item.previousOriginalText !== item.targetText ? (
+                <p className="mt-2 text-[13px] leading-[1.6] text-text-secondary">
+                  目标表达：{item.targetText}
+                </p>
+              ) : null}
+            </Card>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export function ReportView({ report, wordCount, sentenceCount, taskGoals }: ReportViewProps) {
   if (!report) {
     return null;
@@ -366,6 +403,10 @@ export function ReportView({ report, wordCount, sentenceCount, taskGoals }: Repo
       ) : null}
 
       {topCorrection ? <TodayFocusCard correction={topCorrection} /> : null}
+
+      {report.reusedExpressions?.length ? (
+        <ReusedExpressionsSection items={report.reusedExpressions} />
+      ) : null}
 
       {report.growth ? <GrowthSection growth={report.growth} /> : null}
 

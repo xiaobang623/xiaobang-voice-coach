@@ -10,6 +10,22 @@ interface ExtractMemoryBody {
   transcript: string;
   report?: Record<string, unknown>;
   previousSummary?: Record<string, unknown> | null;
+  userId?: string;
+  guestId?: string;
+}
+
+function compactMemoryForPrompt(summary: Record<string, unknown> | null | undefined) {
+  if (!summary || typeof summary !== "object") {
+    return null;
+  }
+
+  return {
+    userLevel: summary.userLevel,
+    topics: Array.isArray(summary.topics) ? summary.topics : [],
+    frequentMistakes: Array.isArray(summary.frequentMistakes) ? summary.frequentMistakes : [],
+    coachNotes: summary.coachNotes ?? summary.notes ?? "",
+    updatedAt: summary.updatedAt,
+  };
 }
 
 Deno.serve(async (req) => {
@@ -49,8 +65,9 @@ Deno.serve(async (req) => {
     });
   }
 
-  const previousBlock = body.previousSummary
-    ? `Previous profile:\n${JSON.stringify(body.previousSummary, null, 2)}\n\n`
+  const compactPreviousSummary = compactMemoryForPrompt(body.previousSummary);
+  const previousBlock = compactPreviousSummary
+    ? `Previous profile:\n${JSON.stringify(compactPreviousSummary, null, 2)}\n\n`
     : "";
   const reportBlock = body.report ? `Latest report:\n${JSON.stringify(body.report, null, 2)}\n\n` : "";
 
@@ -101,7 +118,11 @@ Deno.serve(async (req) => {
     });
   }
 
-  const memory = postProcessMemory(raw);
+  const memory = postProcessMemory(raw, {
+    report: body.report,
+    previousSummary: body.previousSummary,
+    ownerKey: body.userId ?? body.guestId ?? "memory",
+  });
 
   return new Response(JSON.stringify(memory), {
     headers: { ...corsHeaders, "Content-Type": "application/json" },

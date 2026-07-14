@@ -5,6 +5,9 @@ import type {
   MemorySummary,
   ReportHistoryItem,
   ReportJSON,
+  TrackedExpression,
+  TrackedExpressionSourceType,
+  TrackedExpressionStatus,
   UserLevel,
   UserPreferences,
 } from "../types";
@@ -29,6 +32,16 @@ export interface PersistGuestSessionInput extends PersistSessionInput {
 }
 
 const VALID_LEVELS = new Set<UserLevel>(["beginner", "intermediate", "advanced"]);
+const VALID_TRACKED_SOURCES = new Set<TrackedExpressionSourceType>([
+  "correction",
+  "sayBetter",
+  "newExpression",
+]);
+const VALID_TRACKED_STATUSES = new Set<TrackedExpressionStatus>([
+  "unmastered",
+  "reviewing",
+  "mastered",
+]);
 
 function isRegisteredUser(user: { id: string; is_anonymous?: boolean } | null | undefined): user is {
   id: string;
@@ -60,15 +73,67 @@ function normalizeMemorySummary(raw: unknown): MemorySummary | null {
   const frequentMistakes = Array.isArray(record.frequentMistakes)
     ? record.frequentMistakes.map((item) => String(item).trim()).filter(Boolean).slice(0, 5)
     : [];
+  const trackedExpressions = normalizeTrackedExpressions(record.trackedExpressions);
   const coachNotes = String(record.coachNotes ?? record.notes ?? "").trim();
 
   return {
     userLevel: VALID_LEVELS.has(userLevel as UserLevel) ? (userLevel as UserLevel) : "intermediate",
     topics,
     frequentMistakes,
+    trackedExpressions,
     coachNotes: coachNotes.slice(0, 400),
     updatedAt: String(record.updatedAt ?? new Date().toISOString()),
   };
+}
+
+function normalizeTrackedExpressions(raw: unknown): TrackedExpression[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+
+  const result: TrackedExpression[] = [];
+  const seenTargets = new Set<string>();
+
+  for (const item of raw) {
+    if (!item || typeof item !== "object") {
+      continue;
+    }
+
+    const record = item as Record<string, unknown>;
+    const id = String(record.id ?? "").trim();
+    const sourceType = String(record.sourceType ?? "").trim() as TrackedExpressionSourceType;
+    const targetText = String(record.targetText ?? "").trim();
+    const targetKey = targetText.toLowerCase();
+    if (!id || !targetText || !VALID_TRACKED_SOURCES.has(sourceType) || seenTargets.has(targetKey)) {
+      continue;
+    }
+
+    const status = String(record.status ?? "").trim() as TrackedExpressionStatus;
+    const firstSeenAt = String(record.firstSeenAt ?? record.lastSeenAt ?? new Date().toISOString());
+    const lastSeenAt = String(record.lastSeenAt ?? firstSeenAt);
+    const expression: TrackedExpression = {
+      id,
+      sourceType,
+      originalText: String(record.originalText ?? "").trim(),
+      targetText,
+      category: String(record.category ?? "未分类").trim() || "未分类",
+      status: VALID_TRACKED_STATUSES.has(status) ? status : "unmastered",
+      firstSeenAt,
+      lastSeenAt,
+      reuseCount: Number.isFinite(Number(record.reuseCount))
+        ? Math.max(0, Number(record.reuseCount))
+        : 0,
+    };
+
+    if (typeof record.nextReviewAt === "string" && record.nextReviewAt.trim()) {
+      expression.nextReviewAt = record.nextReviewAt.trim();
+    }
+
+    seenTargets.add(targetKey);
+    result.push(expression);
+  }
+
+  return result;
 }
 
 function toDayKey(iso: string): string {

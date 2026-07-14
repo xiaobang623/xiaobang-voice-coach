@@ -92,6 +92,9 @@ export async function generateReport(input: GenerateReportInput): Promise<Report
     durationSeconds: report.durationSeconds ?? input.durationSeconds,
     userLevel: report.userLevel ?? "intermediate",
     corrections: Array.isArray(report.corrections) ? report.corrections : [],
+    ...(Array.isArray(report.reusedExpressions)
+      ? { reusedExpressions: report.reusedExpressions }
+      : {}),
     ...(Array.isArray(report.taskResults) ? { taskResults: report.taskResults } : {}),
     ...(report.taskScore ? { taskScore: report.taskScore } : {}),
   };

@@ -125,7 +125,15 @@ const server = createServer(async (req, res) => {
       }
 
       const raw = JSON.parse(content);
-      sendJson(res, 200, postProcessMemory(raw));
+      sendJson(
+        res,
+        200,
+        postProcessMemory(raw, {
+          report: input.report,
+          previousSummary: input.previousSummary,
+          ownerKey: input.userId ?? input.guestId ?? "memory",
+        }),
+      );
     } catch (error) {
       sendJson(res, 500, {
         error: error instanceof Error ? error.message : "Memory extraction failed",
