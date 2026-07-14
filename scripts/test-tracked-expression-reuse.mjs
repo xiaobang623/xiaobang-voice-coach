@@ -99,6 +99,40 @@ function testSimilarityFallbackIsConservative() {
   assert.equal(misses.length, 0);
 }
 
+function testLightVerbContentPhraseMatching() {
+  const makeScrambledEggs = expression({
+    id: "expr-make-scrambled-eggs",
+    targetText: "make scrambled eggs",
+  });
+
+  const hadMatches = matchTrackedExpressions("User: I had scrambled eggs for dinner.", [
+    makeScrambledEggs,
+  ]);
+  assert.equal(hadMatches.length, 1);
+  assert.equal(hadMatches[0].expressionId, "expr-make-scrambled-eggs");
+  assert.equal(hadMatches[0].currentText, "I had scrambled eggs for dinner.");
+
+  const scrambleMisses = matchTrackedExpressions("User: I made a scramble eggs.", [
+    makeScrambledEggs,
+  ]);
+  assert.equal(scrambleMisses.length, 0);
+
+  const missingEggsMisses = matchTrackedExpressions("User: I have scrambled.", [
+    makeScrambledEggs,
+  ]);
+  assert.equal(missingEggsMisses.length, 0);
+}
+
+function testLightVerbRuleDoesNotApplyToExcludedIdioms() {
+  const idiom = expression({
+    id: "expr-get-used-to",
+    targetText: "get used to something",
+  });
+
+  const matches = matchTrackedExpressions("User: I am used to something now.", [idiom]);
+  assert.equal(matches.length, 0);
+}
+
 function testPreserveGuardWinsOverExtractedMemory() {
   const reuseUpdated = summary([
     expression({ status: "reviewing", reuseCount: 1, lastSeenAt: NOW }),
@@ -159,6 +193,8 @@ testUnmasteredToReviewing();
 testReviewingToMastered();
 testMasteredAndCoachLinesDoNotMatch();
 testSimilarityFallbackIsConservative();
+testLightVerbContentPhraseMatching();
+testLightVerbRuleDoesNotApplyToExcludedIdioms();
 testPreserveGuardWinsOverExtractedMemory();
 testStep1MemoryMergeKeepsReuseStateWhenSameTargetIsRemapped();
 

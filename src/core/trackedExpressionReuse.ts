@@ -7,6 +7,46 @@ import type {
 
 const TOKEN_SIMILARITY_THRESHOLD = 0.8;
 const MIN_TOKENS_FOR_SIMILARITY = 3;
+const MIN_CONTENT_PHRASE_TOKENS = 2;
+
+const LIGHT_VERB_FORMS = new Set([
+  "make",
+  "made",
+  "makes",
+  "have",
+  "had",
+  "has",
+  "do",
+  "did",
+  "does",
+  "get",
+  "got",
+  "gets",
+  "take",
+  "took",
+  "takes",
+  "eat",
+  "ate",
+  "eaten",
+  "eats",
+  "cook",
+  "cooked",
+  "cooks",
+  "drink",
+  "drank",
+  "drunk",
+  "drinks",
+]);
+
+const LIGHT_VERB_EXCLUDED_PHRASES = [
+  "make sense",
+  "turn out",
+  "give up",
+  "take place",
+  "come up with",
+  "get used to",
+  "put up with",
+];
 
 export interface TrackedExpressionReuseResult {
   summary: MemorySummary;
@@ -110,8 +150,36 @@ function findBestSimilarUtterance(
   return best?.utterance ?? null;
 }
 
-function findMatchingUtterance(targetText: string, utterances: UserUtterance[]): UserUtterance | null {
-  const normalizedTarget = normalizeExpressionForMatch(targetText);
+function targetStartsWithExcludedPhrase(normalizedTarget: string): boolean {
+  return LIGHT_VERB_EXCLUDED_PHRASES.some(
+    (phrase) => normalizedTarget === phrase || normalizedTarget.startsWith(`${phrase} `),
+  );
+}
+
+function findContentPhraseUtterance(
+  normalizedTarget: string,
+  sourceType: TrackedExpression["sourceType"],
+  utterances: UserUtterance[],
+): UserUtterance | null {
+  if (sourceType !== "newExpression" || targetStartsWithExcludedPhrase(normalizedTarget)) {
+    return null;
+  }
+
+  const targetTokens = normalizedTarget.split(" ");
+  const [firstToken, ...contentTokens] = targetTokens;
+  if (!LIGHT_VERB_FORMS.has(firstToken) || contentTokens.length < MIN_CONTENT_PHRASE_TOKENS) {
+    return null;
+  }
+
+  const contentPhrase = contentTokens.join(" ");
+  return utterances.find((utterance) => utterance.normalized.includes(contentPhrase)) ?? null;
+}
+
+function findMatchingUtterance(
+  expression: TrackedExpression,
+  utterances: UserUtterance[],
+): UserUtterance | null {
+  const normalizedTarget = normalizeExpressionForMatch(expression.targetText);
   if (!normalizedTarget) {
     return null;
   }
@@ -123,6 +191,15 @@ function findMatchingUtterance(targetText: string, utterances: UserUtterance[]):
   );
   if (exact) {
     return exact;
+  }
+
+  const contentPhrase = findContentPhraseUtterance(
+    normalizedTarget,
+    expression.sourceType,
+    utterances,
+  );
+  if (contentPhrase) {
+    return contentPhrase;
   }
 
   const targetTokens = normalizedTarget.split(" ");
@@ -154,7 +231,7 @@ export function matchTrackedExpressions(
       continue;
     }
 
-    const matchingUtterance = findMatchingUtterance(expression.targetText, utterances);
+    const matchingUtterance = findMatchingUtterance(expression, utterances);
     if (!matchingUtterance) {
       continue;
     }
