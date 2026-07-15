@@ -512,7 +512,7 @@ export class DoubaoVoiceAdapter implements VoiceAdapter {
   private buildStartSessionMeta(): Record<string, unknown> {
     const systemRole =
       this.config?.systemPrompt?.trim() ||
-      "You are a friendly English speaking coach. Keep responses natural and conversational.";
+      "You are a friendly English conversation partner. Chat like a real friend, not a teacher, and naturally drift to related topics when the current one runs out.";
 
     // Explicitly request PCM output; default server output may be ogg_opus.
     const audioConfig: Record<string, unknown> = {
