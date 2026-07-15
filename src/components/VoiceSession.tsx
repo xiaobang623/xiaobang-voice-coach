@@ -347,14 +347,27 @@ const OPENING_GUIDE_DIRECTION_COUNT = 3;
 function SessionOpeningGuide({
   activeTopic,
   activeTask,
+  aiDirections,
 }: {
   activeTopic?: TopicOption | null;
   activeTask?: TaskScenario | null;
+  /**
+   * AI-generated directions prefetched when the user picked this topic/task
+   * (see useOpeningDirections). Decided ONCE at mount: if the request hasn't
+   * resolved yet (or failed), we fall back to the static pool for the whole
+   * session — never swap mid-session, and never block on it.
+   */
+  aiDirections?: TalkDirection[] | null;
 }) {
-  const pool =
+  const staticPool =
     (activeTask?.directions?.length ? activeTask.directions : undefined) ??
     (activeTopic?.directions?.length ? activeTopic.directions : undefined) ??
     FREE_TALK_DIRECTIONS;
+  const poolRef = useRef<TalkDirection[] | null>(null);
+  if (poolRef.current === null) {
+    poolRef.current = aiDirections && aiDirections.length > 0 ? aiDirections : staticPool;
+  }
+  const pool = poolRef.current;
   const [shown, setShown] = useState<TalkDirection[]>(() =>
     pickDirections(pool, OPENING_GUIDE_DIRECTION_COUNT),
   );
@@ -374,11 +387,11 @@ function SessionOpeningGuide({
           {shown.map((direction) => (
             <div
               key={direction.zh}
-              className="flex flex-wrap items-baseline gap-x-2 rounded-[14px] border border-dashed border-accent-muted bg-surface/70 px-3 py-2"
+              className="flex flex-wrap items-baseline gap-x-2 rounded-[14px] border border-dashed border-white/20 bg-surface-canvas-chip px-3 py-2"
             >
               <span className="text-[14px] leading-snug text-ink-on-canvas">{direction.zh}</span>
               {direction.en ? (
-                <span className="text-[12px] italic leading-snug text-ink-on-canvas-faint">
+                <span className="text-[12px] italic leading-snug text-ink-on-canvas-soft">
                   {direction.en}
                 </span>
               ) : null}
@@ -423,6 +436,8 @@ export interface VoiceSessionProps {
   sessionLabel: string;
   activeTopic?: TopicOption | null;
   activeTask?: TaskScenario | null;
+  /** Prefetched AI opening directions for the active topic/task, if ready. */
+  aiDirections?: TalkDirection[] | null;
   appSessionId: string;
   usageUserId?: string | null;
   usageGuestId?: string | null;
@@ -447,6 +462,7 @@ export function VoiceSession({
   sessionLabel: _sessionLabel,
   activeTopic,
   activeTask,
+  aiDirections,
   appSessionId,
   usageUserId,
   usageGuestId,
@@ -772,7 +788,11 @@ export function VoiceSession({
           ) : null}
 
           {showOpeningGuide ? (
-            <SessionOpeningGuide activeTopic={activeTopic} activeTask={activeTask} />
+            <SessionOpeningGuide
+              activeTopic={activeTopic}
+              activeTask={activeTask}
+              aiDirections={aiDirections}
+            />
           ) : null}
 
           {showGuideBanner ? <SessionGuideBanner activeTask={activeTask} /> : null}

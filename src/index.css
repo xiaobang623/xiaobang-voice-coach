@@ -17,6 +17,9 @@
   --color-ink-on-canvas: #f4f3f0;
   --color-ink-on-canvas-soft: #a7abb0;
   --color-ink-on-canvas-faint: #777d84;
+  /* Chip / pill fill on the dark canvas. NEVER use light-mode --color-surface
+     with opacity on the canvas — light fill + light ink drops contrast to ~1.8:1. */
+  --color-surface-canvas-chip: rgba(244, 243, 240, 0.12);
 
   --color-ink: #1b1e22;
   --color-ink-soft: #5b6169;

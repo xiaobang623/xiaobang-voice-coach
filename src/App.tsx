@@ -18,6 +18,7 @@ import {
 import { resolveUsageActor, logApiUsage } from "./core/usageLog";
 import { useVoiceSession } from "./hooks/useVoiceSession";
 import { useVoiceProfile } from "./hooks/useVoiceProfile";
+import { useOpeningDirections } from "./hooks/useOpeningDirections";
 import { useAuth } from "./hooks/useAuth";
 import { useUserPreferences } from "./hooks/useUserPreferences";
 import { pickVoiceType, showsVoicePicker } from "./config/voices";
@@ -53,6 +54,7 @@ function App() {
   const [mainTab, setMainTab] = useState<MainTab>("practice");
   const [practiceScreen, setPracticeScreen] = useState<PracticeScreen>("topics");
   const voice = useVoiceSession();
+  const openingDirections = useOpeningDirections();
   const [report, setReport] = useState<ReportJSON | null>(null);
   const [reportLoading, setReportLoading] = useState(false);
   const [reportError, setReportError] = useState<string | null>(null);
@@ -219,10 +221,39 @@ function App() {
     });
   }, [getVoiceDurationSeconds, usageActor.guestId, usageActor.userId, voice.activeBackend]);
 
-  const handleSelectTopic = useCallback((selectedTopicId: string) => {
-    setTopicId(selectedTopicId);
-    setPracticeScreen("chat");
-  }, []);
+  const handleSelectTopic = useCallback(
+    (selectedTopicId: string) => {
+      // Fire the AI direction prefetch right as the user picks the card, so it
+      // has the whole "connecting" transition to resolve before the opening
+      // guide card mounts. Task scenarios first (roleSetup doubles as the seed).
+      const taskScenario = findTaskScenario(selectedTopicId);
+      const topic = taskScenario ? undefined : CHAT_TOPICS.find((t) => t.id === selectedTopicId);
+      const prefetchTarget = taskScenario
+        ? {
+            topicId: taskScenario.id,
+            title: taskScenario.title,
+            description: taskScenario.description,
+            promptSeed: taskScenario.roleSetup,
+          }
+        : topic
+          ? {
+              topicId: topic.id,
+              title: topic.title,
+              description: topic.description,
+              promptSeed: topic.promptSeed,
+            }
+          : null;
+      openingDirections.prefetch(prefetchTarget, userMemory, {
+        userId: usageActor.userId ?? undefined,
+        guestId: usageActor.guestId ?? undefined,
+        sessionId: sessionIdRef.current,
+      });
+
+      setTopicId(selectedTopicId);
+      setPracticeScreen("chat");
+    },
+    [openingDirections, userMemory, usageActor.userId, usageActor.guestId],
+  );
 
   const handleFreeTalk = useCallback(() => {
     setTopicId(null);
@@ -238,8 +269,9 @@ function App() {
     setReportLoading(false);
     sessionIdRef.current = crypto.randomUUID();
     doubaoLoggedSessionRef.current = null;
+    openingDirections.reset();
     setPracticeScreen("topics");
-  }, [voice, logVoiceUsage]);
+  }, [voice, logVoiceUsage, openingDirections]);
 
   const handleEndAndReport = useCallback(async () => {
     const transcript = buildTranscriptFromMessages(voice.messages);
@@ -496,6 +528,7 @@ function App() {
             onGoToRecord={handleGoToRecord}
             practiceInsight={homePracticeInsight}
             insightLoading={homeInsightLoading}
+            topicCounts={homeGrowthData?.topicCounts}
           />
         ) : null}
 
@@ -506,6 +539,7 @@ function App() {
             sessionLabel={sessionLabel}
             activeTopic={activeTopic}
             activeTask={activeTask}
+            aiDirections={openingDirections.directionsFor(topicId)}
             appSessionId={sessionIdRef.current}
             usageUserId={usageActor.userId}
             usageGuestId={usageActor.guestId}

@@ -497,6 +497,24 @@ function buildGrowthStats(
 }
 
 /**
+ * Count how often each topic id appears in the user's session history.
+ * `sessions.topic` stores clean ids ("daily" / "travel" / task ids) or null
+ * for free talk — null rows are skipped, no fuzzy matching needed.
+ */
+function countTopicFrequency(
+  sessions: Array<{ topic?: string | null }>,
+): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const row of sessions) {
+    if (!row.topic) {
+      continue;
+    }
+    counts[row.topic] = (counts[row.topic] ?? 0) + 1;
+  }
+  return counts;
+}
+
+/**
  * Single round-trip growth page load: one auth read + three parallel queries.
  * History rows omit full report payloads (loaded on expand).
  */
@@ -511,7 +529,7 @@ export async function loadGrowthPageData(): Promise<GrowthPageData | null> {
   }
 
   const [sessionsResult, reportsResult, memoryResult] = await Promise.all([
-    supabase.from("sessions").select("created_at, duration_seconds").order("created_at", { ascending: true }),
+    supabase.from("sessions").select("created_at, duration_seconds, topic").order("created_at", { ascending: true }),
     supabase
       .from("reports")
       .select("created_at, session_id, payload, sessions(topic, duration_seconds)")
@@ -538,6 +556,7 @@ export async function loadGrowthPageData(): Promise<GrowthPageData | null> {
     stats: buildGrowthStats(sessions, reportRows, memory),
     history: buildHistorySummaries(reportRows),
     trackedExpressions: memory?.trackedExpressions ?? [],
+    topicCounts: countTopicFrequency(sessions),
   };
 }
 

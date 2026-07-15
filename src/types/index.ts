@@ -234,4 +234,10 @@ export interface GrowthPageData {
   history: ReportHistoryItem[];
   /** Current memory.summary.trackedExpressions for the mastery view. */
   trackedExpressions: TrackedExpression[];
+  /**
+   * How often each `sessions.topic` id appears in the user's history,
+   * e.g. `{ daily: 5, food: 3 }`. Used to sort home topic cards by habit.
+   * Optional: absent on cached payloads written before 2026-07.
+   */
+  topicCounts?: Record<string, number>;
 }

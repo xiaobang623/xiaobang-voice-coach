@@ -1,11 +1,13 @@
+import { useMemo } from "react";
 import type { TopicOption } from "../types";
 import type { CorrectionType, UserLevel } from "../types";
 import { CHAT_TOPICS } from "../config/chatTopics";
 import { getCefrLevel } from "../config/levels";
 import { TOPIC_ICON, TOPIC_TAG } from "../config/topics";
-import xiaobangIdle from "../assets/xiaobang/xiaobang-idle.png";
+import { Badge } from "./ui/Badge";
 import { Card } from "./ui/Card";
 import { CircleMicIcon } from "./ui/icons";
+import { Mascot } from "./ui/Mascot";
 
 export interface TopicSelectorProps {
   onSelectTopic: (topicId: string) => void;
@@ -15,6 +17,37 @@ export interface TopicSelectorProps {
   onGoToRecord?: () => void;
   practiceInsight?: PracticeInsight | null;
   insightLoading?: boolean;
+  /**
+   * How often each topic id appears in the user's session history (see
+   * loadGrowthPageData's topicCounts). Used to sort cards by habit and tag the
+   * most-practiced one "常聊". Absent/all-zero (guests, new accounts) keeps
+   * the default CHAT_TOPICS order with no badge.
+   */
+  topicCounts?: Record<string, number>;
+}
+
+/**
+ * Sort topics by descending session frequency, keeping ties in the original
+ * CHAT_TOPICS order. Only the single highest-frequency topic (if any) gets
+ * tagged "常聊" — a tie at 0 (guests/new accounts) tags nothing.
+ */
+function sortTopicsByFrequency(
+  topics: TopicOption[],
+  counts: Record<string, number> | undefined,
+): { sorted: TopicOption[]; topTopicId: string | null } {
+  if (!counts) {
+    return { sorted: topics, topTopicId: null };
+  }
+
+  const sorted = topics
+    .map((topic, index) => ({ topic, index, count: counts[topic.id] ?? 0 }))
+    .sort((a, b) => b.count - a.count || a.index - b.index)
+    .map((entry) => entry.topic);
+
+  const top = sorted[0];
+  const topTopicId = top && (counts[top.id] ?? 0) > 0 ? top.id : null;
+
+  return { sorted, topTopicId };
 }
 
 export interface PracticeInsight {
@@ -46,10 +79,12 @@ function formatInsightDuration(seconds: number): string {
 function TopicCard({
   topic,
   index,
+  isFrequent,
   onSelect,
 }: {
   topic: TopicOption;
   index: number;
+  isFrequent: boolean;
   onSelect: () => void;
 }) {
   const tag = TOPIC_TAG[topic.id];
@@ -67,12 +102,15 @@ function TopicCard({
         className="h-full min-h-[164px] p-4 transition-[border-color,transform] duration-[160ms] ease-[cubic-bezier(0.4,0,0.2,1)] group-hover:border-border-strong group-active:scale-[0.98]"
       >
         <div className="flex h-full flex-col justify-between gap-2.5">
-          <span className={`flex h-11 w-11 items-center justify-center rounded-[12px] ${tag.tint}`}>
-            {Icon ? <Icon className="h-4.5 w-4.5" /> : null}
-          </span>
+          <div className="flex items-start justify-between gap-2">
+            <span className={`flex h-11 w-11 items-center justify-center rounded-[12px] ${tag.tint}`}>
+              {Icon ? <Icon className="h-4.5 w-4.5" /> : null}
+            </span>
+            {isFrequent ? <Badge tone="accent">常聊</Badge> : null}
+          </div>
           <div>
             <h3 className="text-[17px] font-semibold tracking-tight text-text">{topic.title}</h3>
-            <p className="mt-1.5 text-[13px] leading-[1.45] text-text-muted">{topic.description}</p>
+            <p className="mt-1.5 text-[13px] leading-[1.45] text-text-secondary">{topic.description}</p>
           </div>
         </div>
       </Card>
@@ -88,11 +126,16 @@ export function TopicSelector({
   onGoToRecord,
   practiceInsight,
   insightLoading = false,
+  topicCounts,
 }: TopicSelectorProps) {
   const hasInsight = Boolean(practiceInsight && practiceInsight.sessionCount7d > 0);
   const levelLabel = practiceInsight?.latestUserLevel
     ? getCefrLevel(practiceInsight.latestUserLevel)
     : "--";
+  const { sorted: sortedTopics, topTopicId } = useMemo(
+    () => sortTopicsByFrequency(CHAT_TOPICS, topicCounts),
+    [topicCounts],
+  );
 
   return (
     <section className="animate-fade-up pb-2">
@@ -112,16 +155,24 @@ export function TopicSelector({
           className="relative block w-full min-h-[230px] overflow-hidden rounded-[24px] bg-ink px-[clamp(28px,4vw,44px)] pb-[clamp(30px,4vw,42px)] pt-[clamp(34px,4vw,52px)] text-left md:min-h-[270px]"
         >
           <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(160px_160px_at_88%_-10%,rgba(166,129,63,0.32),transparent_70%)]" />
+          <div className="pointer-events-none absolute -bottom-3 right-4 z-0 sm:right-7">
+            <Mascot
+              expression="happy"
+              fullBody
+              size={150}
+              className="drop-shadow-[0_16px_28px_rgba(0,0,0,0.2)] sm:[transform:scale(1.1)]"
+            />
+          </div>
           <div className="relative flex items-center justify-between">
-            <div className="eyebrow !text-[rgba(244,243,240,0.5)]">开始练习</div>
+            <div className="eyebrow !text-ink-on-canvas/50">开始练习</div>
             <div className="flex h-[60px] w-[60px] shrink-0 items-center justify-center rounded-full border-[1.5px] border-[rgba(244,243,240,0.28)]">
               <CircleMicIcon className="h-5 w-5 text-ink-on-canvas" />
             </div>
           </div>
-          <h2 className="relative mt-9 text-[clamp(28px,3vw,34px)] font-semibold tracking-tight text-ink-on-canvas md:mt-[54px]">
+          <h2 className="relative z-10 mt-9 max-w-[60%] text-[clamp(28px,3vw,34px)] font-semibold tracking-tight text-ink-on-canvas md:mt-[54px]">
             开始对话
           </h2>
-          <p className="relative mt-2.5 max-w-[46ch] text-[15px] leading-relaxed text-[rgba(244,243,240,0.6)]">
+          <p className="relative z-10 mt-2.5 max-w-[42ch] pr-20 text-[15px] leading-relaxed text-ink-on-canvas/60">
             从熟悉的话题开始，AI 全程不打断，说完再一起复盘
           </p>
         </button>
@@ -130,11 +181,12 @@ export function TopicSelector({
           <div>
             <div className="section-title">选择场景</div>
             <div className="grid grid-cols-2 gap-3 min-[900px]:grid-cols-4">
-              {CHAT_TOPICS.map((topic, index) => (
+              {sortedTopics.map((topic, index) => (
                 <TopicCard
                   key={topic.id}
                   topic={topic}
                   index={index}
+                  isFrequent={topic.id === topTopicId}
                   onSelect={() => onSelectTopic(topic.id)}
                 />
               ))}
@@ -173,17 +225,17 @@ export function TopicSelector({
                       <div className="text-[22px] font-bold tracking-tight text-text">
                         {practiceInsight.sessionCount7d}
                       </div>
-                      <div className="mt-0.5 text-[11.5px] text-text-muted">练习次数</div>
+                      <div className="mt-0.5 text-[12px] text-text-secondary">练习次数</div>
                     </div>
                     <div>
                       <div className="text-[22px] font-bold tracking-tight text-text">
                         {formatInsightDuration(practiceInsight.durationSeconds7d)}
                       </div>
-                      <div className="mt-0.5 text-[11.5px] text-text-muted">总时长</div>
+                      <div className="mt-0.5 text-[12px] text-text-secondary">总时长</div>
                     </div>
                     <div>
                       <div className="text-[22px] font-bold tracking-tight text-spark">{levelLabel}</div>
-                      <div className="mt-0.5 text-[11.5px] text-text-muted">当前水平</div>
+                      <div className="mt-0.5 text-[12px] text-text-secondary">当前水平</div>
                     </div>
                   </div>
                   <div className="mt-3.5 border-t border-border pt-3.5 text-[13px] leading-[1.55] text-text-secondary">

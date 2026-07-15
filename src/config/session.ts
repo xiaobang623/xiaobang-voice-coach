@@ -87,7 +87,12 @@ export function buildTaskSystemPrompt(
   return `${roleBlock} ${memoryBlock}`;
 }
 
-function formatMemoryBlock(memory?: MemorySummary | null): string {
+/**
+ * Format a learner memory summary into a natural-language block for the Coach's
+ * system prompt. Exported so other prompt builders (e.g. AI opening-direction
+ * generation) can reuse the exact same phrasing instead of re-deriving it.
+ */
+export function formatMemoryBlock(memory?: MemorySummary | null): string {
   if (!memory) {
     return "";
   }

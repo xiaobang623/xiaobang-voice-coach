@@ -30,6 +30,11 @@ function parseEnvLocalFile() {
 
 import { SYSTEM_PROMPT, cleanTranscriptForReport, postProcessReport } from "./report-post-process.js";
 import { MEMORY_SYSTEM_PROMPT, postProcessMemory } from "./memory-post-process.js";
+import {
+  DIRECTIONS_SYSTEM_PROMPT,
+  buildDirectionsUserPrompt,
+  postProcessDirections,
+} from "./directions-post-process.js";
 
 const envLocal = parseEnvLocalFile();
 const apiKey = process.env.DEEPSEEK_API_KEY ?? envLocal.DEEPSEEK_API_KEY;
@@ -137,6 +142,85 @@ const server = createServer(async (req, res) => {
     } catch (error) {
       sendJson(res, 500, {
         error: error instanceof Error ? error.message : "Memory extraction failed",
+      });
+    }
+    return;
+  }
+
+  if (req.url === "/generate-directions") {
+    if (!apiKey) {
+      sendJson(res, 500, { error: "DEEPSEEK_API_KEY is not configured in .env.local" });
+      return;
+    }
+
+    let body = "";
+    for await (const chunk of req) {
+      body += chunk;
+    }
+
+    let input;
+    try {
+      input = JSON.parse(body);
+    } catch {
+      sendJson(res, 400, { error: "Invalid JSON body" });
+      return;
+    }
+
+    if (!input.title?.trim()) {
+      sendJson(res, 400, { error: "title is required" });
+      return;
+    }
+
+    try {
+      const deepseekResponse = await fetch("https://api.deepseek.com/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: "deepseek-chat",
+          temperature: 0.9,
+          max_tokens: 400,
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: DIRECTIONS_SYSTEM_PROMPT },
+            { role: "user", content: buildDirectionsUserPrompt(input) },
+          ],
+        }),
+      });
+
+      if (!deepseekResponse.ok) {
+        const detail = await deepseekResponse.text();
+        sendJson(res, 502, { error: "DeepSeek request failed", detail });
+        return;
+      }
+
+      const completion = await deepseekResponse.json();
+      const content = completion?.choices?.[0]?.message?.content;
+      if (!content || typeof content !== "string") {
+        sendJson(res, 502, { error: "Empty model response" });
+        return;
+      }
+
+      let raw;
+      try {
+        raw = JSON.parse(content);
+      } catch {
+        sendJson(res, 502, { error: "Model response was not valid JSON" });
+        return;
+      }
+
+      const directions = postProcessDirections(raw);
+      if (!directions) {
+        sendJson(res, 502, { error: "Model response had too few usable directions" });
+        return;
+      }
+
+      sendJson(res, 200, { directions });
+    } catch (error) {
+      sendJson(res, 500, {
+        error: error instanceof Error ? error.message : "Direction generation failed",
       });
     }
     return;
