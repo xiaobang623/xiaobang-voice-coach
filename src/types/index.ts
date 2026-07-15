@@ -232,4 +232,6 @@ export interface ReportHistoryItem {
 export interface GrowthPageData {
   stats: GrowthStats;
   history: ReportHistoryItem[];
+  /** Current memory.summary.trackedExpressions for the mastery view. */
+  trackedExpressions: TrackedExpression[];
 }

@@ -6,6 +6,7 @@ import type {
   GrowthStats,
   ReportHistoryItem,
   ReportJSON,
+  TrackedExpression,
 } from "../types";
 import { getCefrLevel, getLevelInfo } from "../config/levels";
 import {
@@ -18,6 +19,7 @@ import { loadGrowthPageData, loadReportDetail } from "../core/storage";
 import { useAuth } from "../hooks/useAuth";
 import { scenarioLabel } from "../config/topics";
 import { LevelSystemCard } from "./LevelSystem";
+import { ExpressionMasteryTabs } from "./ExpressionMasteryTabs";
 
 export interface GrowthPanelProps {
   isGuest: boolean;
@@ -131,6 +133,9 @@ export function GrowthPanel({ isGuest, onGoToAccount }: GrowthPanelProps) {
 
   const [stats, setStats] = useState<GrowthStats | null>(initialCache?.stats ?? null);
   const [history, setHistory] = useState<ReportHistoryItem[]>(initialCache?.history ?? []);
+  const [trackedExpressions, setTrackedExpressions] = useState<TrackedExpression[]>(
+    initialCache?.trackedExpressions ?? [],
+  );
   const [expandedSessionId, setExpandedSessionId] = useState<string | null>(null);
   const [reportDetails, setReportDetails] = useState<Record<string, ReportJSON>>({});
   const [detailLoadingId, setDetailLoadingId] = useState<string | null>(null);
@@ -142,6 +147,7 @@ export function GrowthPanel({ isGuest, onGoToAccount }: GrowthPanelProps) {
     if (isGuest || !userId) {
       setStats(null);
       setHistory([]);
+      setTrackedExpressions([]);
       setReportDetails({});
       setExpandedSessionId(null);
       setLoading(false);
@@ -153,6 +159,7 @@ export function GrowthPanel({ isGuest, onGoToAccount }: GrowthPanelProps) {
     if (cached) {
       setStats(cached.stats);
       setHistory(cached.history);
+      setTrackedExpressions(cached.trackedExpressions);
       setLoading(false);
     }
 
@@ -176,6 +183,7 @@ export function GrowthPanel({ isGuest, onGoToAccount }: GrowthPanelProps) {
           writeGrowthCache(userId, data);
           setStats(data.stats);
           setHistory(data.history);
+          setTrackedExpressions(data.trackedExpressions);
         }
       } catch (loadError) {
         if (!cancelled && !cached) {
@@ -284,42 +292,8 @@ export function GrowthPanel({ isGuest, onGoToAccount }: GrowthPanelProps) {
           </div>
 
           <div className="mt-7">
-            <div className="section-title">常见问题模式</div>
-            <Card variant="default" className="p-0">
-              <div className="divide-y divide-border">
-                {stats.frequentMistakes.length > 0 ? (
-                  stats.frequentMistakes.slice(0, 3).map((mistake) => (
-                    <div
-                      key={`${mistake.type}-${mistake.original}-${mistake.corrected}`}
-                      className="flex items-center gap-3 px-5 py-3"
-                    >
-                      <div className="w-28 shrink-0 text-[13.5px] font-semibold tracking-tight text-text">
-                        {mistake.type === "grammar"
-                          ? "时态一致性"
-                          : mistake.type === "collocation"
-                            ? "介词使用"
-                            : mistake.type === "vocabulary"
-                              ? "词汇选择"
-                              : mistake.type === "naturalness"
-                                ? "连接词单一"
-                                : "句式结构"}
-                      </div>
-                      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-surface-muted">
-                        <div
-                          className="h-full rounded-full bg-ink-faint"
-                          style={{ width: `${Math.min(100, Math.max(18, mistake.count * 12))}%` }}
-                        />
-                      </div>
-                      <div className="w-12 shrink-0 text-right text-[12px] text-text-muted">
-                        {mistake.count} 次
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="px-5 py-4 text-sm text-text-muted">暂无常见问题</div>
-                )}
-              </div>
-            </Card>
+            <div className="section-title">掌握度</div>
+            <ExpressionMasteryTabs trackedExpressions={trackedExpressions} />
           </div>
         </div>
 

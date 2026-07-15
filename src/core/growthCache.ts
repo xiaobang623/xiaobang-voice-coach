@@ -17,7 +17,11 @@ function readStorageEntry(userId: string): GrowthCacheEntry | null {
       return null;
     }
     const entry = JSON.parse(raw) as GrowthCacheEntry;
-    if (entry.userId !== userId || !entry.data?.stats) {
+    if (
+      entry.userId !== userId ||
+      !entry.data?.stats ||
+      !Array.isArray(entry.data.trackedExpressions)
+    ) {
       return null;
     }
     return entry;

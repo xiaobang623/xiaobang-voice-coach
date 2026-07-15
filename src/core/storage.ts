@@ -532,10 +532,12 @@ export async function loadGrowthPageData(): Promise<GrowthPageData | null> {
 
   const sessions = sessionsResult.data ?? [];
   const reportRows = (reportsResult.data ?? []) as ReportHistoryRow[];
+  const memory = normalizeMemorySummary(memoryResult.data?.summary);
 
   return {
-    stats: buildGrowthStats(sessions, reportRows, memoryResult.data?.summary),
+    stats: buildGrowthStats(sessions, reportRows, memory),
     history: buildHistorySummaries(reportRows),
+    trackedExpressions: memory?.trackedExpressions ?? [],
   };
 }
 
