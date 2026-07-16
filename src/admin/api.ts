@@ -4,6 +4,7 @@ import type {
   AdminUserRow,
   CostProviderRow,
   DashboardSummary,
+  FunnelSummaryData,
   ModelInstancesData,
   Pagination,
   ResolvedVoiceConfigPreview,
@@ -91,6 +92,20 @@ export async function logoutAdmin() {
 
 export async function fetchDashboardSummary(): Promise<DashboardSummary> {
   const result = await adminFetch<ApiSuccess<DashboardSummary>>("/api/admin/dashboard-summary");
+  return result.data;
+}
+
+export async function fetchFunnelSummary(params: {
+  dateFrom: string;
+  dateTo: string;
+}): Promise<FunnelSummaryData> {
+  const query = new URLSearchParams({
+    date_from: params.dateFrom,
+    date_to: params.dateTo,
+  });
+  const result = await adminFetch<ApiSuccess<FunnelSummaryData>>(
+    `/api/admin/funnel-summary?${query}`,
+  );
   return result.data;
 }
 

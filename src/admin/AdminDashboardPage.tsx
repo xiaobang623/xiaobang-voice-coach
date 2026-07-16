@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { AdminLayout } from "./AdminLayout";
 import { DashboardSummaryCards } from "./DashboardSummary";
+import { FunnelSection } from "./FunnelSection";
 import { UserListTable } from "./UserListTable";
 import { SessionListTable } from "./SessionListTable";
 import { VoiceConfigSection } from "./VoiceConfigSection";
@@ -89,6 +90,7 @@ export function AdminDashboardPage({ onLogout }: AdminDashboardPageProps) {
   return (
     <AdminLayout user={user} onLogout={handleLogout}>
       <DashboardSummaryCards data={summary} loading={summaryLoading} error={summaryError} />
+      <FunnelSection />
       <VoiceConfigSection user={user} />
       <UserListTable user={user} onSelectUser={setFilterUserId} />
       <SessionListTable user={user} filterUserId={filterUserId} onFilterUserIdChange={setFilterUserId} />

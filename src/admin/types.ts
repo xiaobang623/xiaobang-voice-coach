@@ -167,3 +167,18 @@ export interface ModelInstancesData {
     tts: Record<string, { model: string; ok: boolean; detail: string }>;
   };
 }
+
+export interface FunnelStepRow {
+  event_name: string;
+  label: string;
+  /** Distinct users/guests that fired the event in range. */
+  actor_count: number;
+  event_count: number;
+  /** Actor conversion vs the previous funnel step (0-1), null for step 1. */
+  conversion_from_prev: number | null;
+}
+
+export interface FunnelSummaryData {
+  steps: FunnelStepRow[];
+  extra_events: FunnelStepRow[];
+}

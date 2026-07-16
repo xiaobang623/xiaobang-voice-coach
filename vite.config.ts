@@ -30,6 +30,10 @@ export default defineConfig({
         target: "http://localhost:3099",
         changeOrigin: true,
       },
+      "/api/log-event": {
+        target: "http://localhost:3099",
+        changeOrigin: true,
+      },
       // Local api/*.js handlers. Run: npm run dev:api
       "/api/admin": {
         target: "http://localhost:3099",

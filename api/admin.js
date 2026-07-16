@@ -3,6 +3,7 @@ import authLogout from "../serverless-admin/auth-logout.js";
 import authReset from "../serverless-admin/auth-reset.js";
 import authSetup from "../serverless-admin/auth-setup.js";
 import dashboardSummary from "../serverless-admin/dashboard-summary.js";
+import funnelSummary from "../serverless-admin/funnel-summary.js";
 import me from "../serverless-admin/me.js";
 import modelInstances from "../serverless-admin/model-instances.js";
 import sessions from "../serverless-admin/sessions.js";
@@ -17,6 +18,7 @@ const ROUTES = new Map([
   ["auth/reset", authReset],
   ["auth/setup", authSetup],
   ["dashboard-summary", dashboardSummary],
+  ["funnel-summary", funnelSummary],
   ["me", me],
   ["model-instances", modelInstances],
   ["sessions", sessions],

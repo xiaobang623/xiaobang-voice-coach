@@ -12,6 +12,7 @@ import type { UseVoiceSessionResult } from "../hooks/useVoiceSession";
 import { SPEED_OPTIONS } from "../config/session";
 import { FREE_TALK_DIRECTIONS, pickDirections } from "../config/chatTopics";
 import { isTypingTestAvailable } from "../config/features";
+import { trackEventOnce } from "../core/analytics";
 import { TaskCard } from "./TaskCard";
 import { TaskChecklist } from "./TaskChecklist";
 import { Button } from "./ui/Button";
@@ -501,6 +502,8 @@ export interface VoiceSessionProps {
   appSessionId: string;
   usageUserId?: string | null;
   usageGuestId?: string | null;
+  analyticsUserId?: string | null;
+  analyticsGuestId?: string | null;
   voiceType: string;
   voiceOptions: VoiceOption[];
   showVoicePicker: boolean;
@@ -526,6 +529,8 @@ export function VoiceSession({
   appSessionId,
   usageUserId,
   usageGuestId,
+  analyticsUserId,
+  analyticsGuestId,
   voiceType,
   voiceOptions,
   showVoicePicker,
@@ -564,6 +569,21 @@ export function VoiceSession({
   const [readyRequested, setReadyRequested] = useState(false);
 
   const openingFlowKey = activeTask?.id ?? activeTopic?.id ?? "free-talk";
+  const analyticsTopic = activeTask?.id ?? activeTopic?.id ?? "free-talk";
+
+  const prepShownAtRef = useRef(Date.now());
+  const readyAtRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    prepShownAtRef.current = Date.now();
+    readyAtRef.current = null;
+    trackEventOnce(`enter_session:${appSessionId}`, "enter_session", {
+      userId: analyticsUserId,
+      guestId: analyticsGuestId,
+      sessionId: appSessionId,
+      props: { topic: analyticsTopic },
+    });
+  }, [analyticsGuestId, analyticsTopic, analyticsUserId, appSessionId]);
 
   useEffect(() => {
     setTaskCardDismissed(false);
@@ -591,7 +611,22 @@ export function VoiceSession({
   const sessionLocked = isActive;
   const hasHistory = messages.length > 0;
   const userHasSpoken = messages.some((message) => message.role === "user" && message.text.trim().length > 0);
+  const userHasFinalUtterance = messages.some(
+    (message) => message.role === "user" && message.isFinal && message.text.trim().length > 0,
+  );
   const canGenerateReport = userHasSpoken && !report && !reportLoading;
+
+  useEffect(() => {
+    if (!userHasFinalUtterance) return;
+    trackEventOnce(`first_utterance:${appSessionId}`, "first_utterance", {
+      userId: analyticsUserId,
+      guestId: analyticsGuestId,
+      sessionId: appSessionId,
+      props: readyAtRef.current !== null
+        ? { msFromReady: Math.max(0, Date.now() - readyAtRef.current) }
+        : {},
+    });
+  }, [analyticsGuestId, analyticsUserId, userHasFinalUtterance, appSessionId]);
 
   const handleStart = useCallback((waitForUserReady = false) => {
     void start({
@@ -615,6 +650,17 @@ export function VoiceSession({
   ]);
 
   const handleOpeningReady = useCallback(() => {
+    if (readyAtRef.current === null) readyAtRef.current = Date.now();
+    trackEventOnce(`ready_click:${appSessionId}`, "ready_click", {
+      userId: analyticsUserId,
+      guestId: analyticsGuestId,
+      sessionId: appSessionId,
+      props: {
+        waitedMs: Math.max(0, Date.now() - prepShownAtRef.current),
+        topic: analyticsTopic,
+      },
+    });
+
     if (errorMessage) {
       setReadyRequested(false);
       handleStart(true);
@@ -630,7 +676,7 @@ export function VoiceSession({
     if (status === "ended") {
       handleStart(true);
     }
-  }, [enableInput, errorMessage, handleStart, status]);
+  }, [analyticsGuestId, analyticsTopic, analyticsUserId, appSessionId, enableInput, errorMessage, handleStart, status]);
 
   const handleOpeningRetry = useCallback(() => {
     setReadyRequested(false);

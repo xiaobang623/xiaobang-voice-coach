@@ -16,13 +16,20 @@ import {
   preserveTrackedExpressionReuse,
 } from "./core/trackedExpressionReuse";
 import { resolveUsageActor, logApiUsage } from "./core/usageLog";
+import { setAnalyticsContext, trackEventOnce } from "./core/analytics";
 import { useVoiceSession } from "./hooks/useVoiceSession";
 import { useVoiceProfile } from "./hooks/useVoiceProfile";
 import { useOpeningDirections } from "./hooks/useOpeningDirections";
 import { useAuth } from "./hooks/useAuth";
 import { useUserPreferences } from "./hooks/useUserPreferences";
 import { pickVoiceType, showsVoicePicker } from "./config/voices";
-import { loadUserMemory, loadGrowthPageData, persistGuestSessionReport, persistSessionReport, upsertUserMemory } from "./core/storage";
+import {
+  loadUserMemory,
+  loadGrowthPageData,
+  persistGuestSessionReport,
+  persistSessionReport,
+  upsertUserMemory,
+} from "./core/storage";
 import {
   GROWTH_CACHE_STALE_MS,
   growthCacheAgeMs,
@@ -49,7 +56,7 @@ import type {
 type PracticeScreen = "topics" | "chat" | "report";
 
 function App() {
-  const { isConfigured, isAnonymous, userId } = useAuth();
+  const { isConfigured, isAnonymous, isLoading: authLoading, userId } = useAuth();
   const { preferences, setVoiceType, setSpeedRatio, setShowSubtitle } = useUserPreferences();
   const { voiceProfile } = useVoiceProfile();
   const [mainTab, setMainTab] = useState<MainTab>("practice");
@@ -166,6 +173,48 @@ function App() {
     () => resolveUsageActor({ userId, isAnonymous }),
     [userId, isAnonymous],
   );
+
+  // 事件表的 user_id 记录 Supabase auth uid（包含匿名 auth uid）。
+  // 仅在 Supabase 未配置/无 auth uid 时退回本地 guestId，保证游客也可统计。
+  const analyticsActor = useMemo(
+    () => ({
+      userId: userId ?? null,
+      guestId: userId ? null : usageActor.guestId,
+    }),
+    [userId, usageActor.guestId],
+  );
+
+  useEffect(() => {
+    setAnalyticsContext({
+      userId: analyticsActor.userId,
+      guestId: analyticsActor.guestId,
+      sessionId: sessionIdRef.current,
+    });
+  }, [analyticsActor]);
+
+  // 开口漏斗埋点：App 启动。等 auth 恢复完成再记，保证游客/登录身份归属稳定。
+  useEffect(() => {
+    if (authLoading) {
+      return;
+    }
+    trackEventOnce("app_open", "app_open", {
+      userId: analyticsActor.userId,
+      guestId: analyticsActor.guestId,
+    });
+  }, [authLoading, analyticsActor]);
+
+  // 开口漏斗埋点：复盘报告渲染成功。
+  useEffect(() => {
+    if (practiceScreen !== "report" || !report) {
+      return;
+    }
+    const sessionId = sessionIdRef.current;
+    trackEventOnce(`report_view:${sessionId}`, "report_view", {
+      userId: analyticsActor.userId,
+      guestId: analyticsActor.guestId,
+      sessionId,
+    });
+  }, [practiceScreen, report, analyticsActor]);
 
   const homePracticeInsight = useMemo<PracticeInsight | null>(() => {
     if (!homeGrowthData) {
@@ -305,6 +354,17 @@ function App() {
     const runId = ++reportRunRef.current;
     const isCurrentRun = () => reportRunRef.current === runId;
 
+    // 开口漏斗埋点：用户主动结束会话（transcript 非空才算一次有效完成）。
+    trackEventOnce(`session_complete:${sessionId}`, "session_complete", {
+      userId: analyticsActor.userId,
+      guestId: analyticsActor.guestId,
+      sessionId,
+      props: {
+        durationSeconds: durationSeconds || 1,
+        userTurns: speechStats.sentenceCount,
+      },
+    });
+
     setPracticeScreen("report");
     setReportLoading(true);
     setReportError(null);
@@ -420,7 +480,7 @@ function App() {
         setReportLoading(false);
       }
     }
-  }, [voice, topicId, isAnonymous, userMemory, usageActor, userId, getVoiceDurationSeconds, logVoiceUsage]);
+  }, [voice, topicId, isAnonymous, userMemory, usageActor, analyticsActor, userId, getVoiceDurationSeconds, logVoiceUsage]);
 
   const sessionLabel = useMemo(() => scenarioLabel(topicId), [topicId]);
 
@@ -567,6 +627,8 @@ function App() {
             appSessionId={sessionIdRef.current}
             usageUserId={usageActor.userId}
             usageGuestId={usageActor.guestId}
+            analyticsUserId={analyticsActor.userId}
+            analyticsGuestId={analyticsActor.guestId}
             voiceType={resolvedVoiceType}
             voiceOptions={voiceProfile.voices}
             showVoicePicker={showsVoicePicker(voiceProfile)}
