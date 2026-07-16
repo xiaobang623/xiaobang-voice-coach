@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import { ReportView } from "./ReportView";
 import { Card } from "./ui/Card";
 import { Button } from "./ui/Button";
 import type {
   GrowthStats,
+  MemoryEntry,
   ReportHistoryItem,
   ReportJSON,
   TrackedExpression,
+  UserMemory,
 } from "../types";
 import { getCefrLevel, getLevelInfo } from "../config/levels";
 import {
@@ -15,7 +18,7 @@ import {
   readGrowthCache,
   writeGrowthCache,
 } from "../core/growthCache";
-import { loadGrowthPageData, loadReportDetail } from "../core/storage";
+import { loadGrowthPageData, loadReportDetail, upsertUserMemory } from "../core/storage";
 import { useAuth } from "../hooks/useAuth";
 import { scenarioLabel } from "../config/topics";
 import { LevelSystemCard } from "./LevelSystem";
@@ -127,6 +130,96 @@ function ReviewRow({
   );
 }
 
+function MemoryChip({
+  children,
+  onDelete,
+  disabled,
+}: {
+  children: ReactNode;
+  onDelete: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="flex items-start justify-between gap-3 rounded-2xl border border-border-subtle bg-bg-warm/60 px-3 py-2.5">
+      <div className="min-w-0 text-sm leading-relaxed text-text">{children}</div>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={onDelete}
+        className="shrink-0 rounded-full px-2 py-1 text-[12px] font-semibold text-text-muted transition-colors hover:bg-surface hover:text-error disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        删除
+      </button>
+    </div>
+  );
+}
+
+function RememberedAboutYou({
+  memory,
+  deletingKey,
+  onDeleteFact,
+  onDeleteEntry,
+}: {
+  memory: UserMemory | null;
+  deletingKey: string | null;
+  onDeleteFact: (fact: string) => void;
+  onDeleteEntry: (entry: MemoryEntry) => void;
+}) {
+  const facts = memory?.summary.personalFacts ?? [];
+  const storyEntries = [...(memory?.entries ?? [])]
+    .filter((entry) => entry.storyNotes.trim())
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .slice(0, 8);
+
+  if (facts.length === 0 && storyEntries.length === 0) {
+    return null;
+  }
+
+  return (
+    <div>
+      <div className="section-title">小榜记得的关于你</div>
+      <Card variant="default" className="space-y-4 p-5">
+        {facts.length > 0 ? (
+          <div>
+            <div className="mb-2 text-xs font-semibold text-text-muted">稳定信息</div>
+            <div className="space-y-2">
+              {facts.map((fact) => (
+                <MemoryChip
+                  key={fact}
+                  disabled={deletingKey === `fact:${fact}`}
+                  onDelete={() => onDeleteFact(fact)}
+                >
+                  {fact}
+                </MemoryChip>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {storyEntries.length > 0 ? (
+          <div>
+            <div className="mb-2 text-xs font-semibold text-text-muted">最近聊过的近况</div>
+            <div className="space-y-2">
+              {storyEntries.map((entry) => (
+                <MemoryChip
+                  key={entry.sessionId}
+                  disabled={deletingKey === `entry:${entry.sessionId}`}
+                  onDelete={() => onDeleteEntry(entry)}
+                >
+                  <div>{entry.storyNotes}</div>
+                  <div className="mt-1 text-[11px] text-text-muted">
+                    {entry.topic} · {formatDate(entry.createdAt)}
+                  </div>
+                </MemoryChip>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </Card>
+    </div>
+  );
+}
+
 export function GrowthPanel({ isGuest, onGoToAccount }: GrowthPanelProps) {
   const { userId } = useAuth();
   const initialCache = !isGuest && userId ? readGrowthCache(userId) : null;
@@ -136,18 +229,21 @@ export function GrowthPanel({ isGuest, onGoToAccount }: GrowthPanelProps) {
   const [trackedExpressions, setTrackedExpressions] = useState<TrackedExpression[]>(
     initialCache?.trackedExpressions ?? [],
   );
+  const [memory, setMemory] = useState<UserMemory | null>(initialCache?.memory ?? null);
   const [expandedSessionId, setExpandedSessionId] = useState<string | null>(null);
   const [reportDetails, setReportDetails] = useState<Record<string, ReportJSON>>({});
   const [detailLoadingId, setDetailLoadingId] = useState<string | null>(null);
   const [loading, setLoading] = useState(!isGuest && !initialCache);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [deletingMemoryKey, setDeletingMemoryKey] = useState<string | null>(null);
 
   useEffect(() => {
     if (isGuest || !userId) {
       setStats(null);
       setHistory([]);
       setTrackedExpressions([]);
+      setMemory(null);
       setReportDetails({});
       setExpandedSessionId(null);
       setLoading(false);
@@ -160,6 +256,7 @@ export function GrowthPanel({ isGuest, onGoToAccount }: GrowthPanelProps) {
       setStats(cached.stats);
       setHistory(cached.history);
       setTrackedExpressions(cached.trackedExpressions);
+      setMemory(cached.memory ?? null);
       setLoading(false);
     }
 
@@ -184,6 +281,7 @@ export function GrowthPanel({ isGuest, onGoToAccount }: GrowthPanelProps) {
           setStats(data.stats);
           setHistory(data.history);
           setTrackedExpressions(data.trackedExpressions);
+          setMemory(data.memory ?? null);
         }
       } catch (loadError) {
         if (!cancelled && !cached) {
@@ -226,6 +324,77 @@ export function GrowthPanel({ isGuest, onGoToAccount }: GrowthPanelProps) {
       }
     },
     [expandedSessionId, reportDetails],
+  );
+
+  const persistMemoryUpdate = useCallback(
+    async (nextMemory: UserMemory, deletingKey: string) => {
+      setDeletingMemoryKey(deletingKey);
+      const previousMemory = memory;
+      setMemory(nextMemory);
+      try {
+        await upsertUserMemory(nextMemory);
+        if (userId) {
+          writeGrowthCache(userId, {
+            stats: stats ?? {
+              sessionCount: 0,
+              totalDurationSeconds: 0,
+              currentStreakDays: 0,
+              longestStreakDays: 0,
+              latestUserLevel: nextMemory.summary.userLevel,
+              frequentMistakes: [],
+            },
+            history,
+            trackedExpressions,
+            memory: nextMemory,
+          });
+        }
+      } catch (deleteError) {
+        setMemory(previousMemory);
+        console.warn(
+          "[memory] failed to delete visible memory:",
+          deleteError instanceof Error ? deleteError.message : deleteError,
+        );
+      } finally {
+        setDeletingMemoryKey(null);
+      }
+    },
+    [history, memory, stats, trackedExpressions, userId],
+  );
+
+  const handleDeleteFact = useCallback(
+    (fact: string) => {
+      if (!memory || deletingMemoryKey) {
+        return;
+      }
+      void persistMemoryUpdate(
+        {
+          ...memory,
+          summary: {
+            ...memory.summary,
+            personalFacts: memory.summary.personalFacts.filter((item) => item !== fact),
+            updatedAt: new Date().toISOString(),
+          },
+        },
+        `fact:${fact}`,
+      );
+    },
+    [deletingMemoryKey, memory, persistMemoryUpdate],
+  );
+
+  const handleDeleteEntry = useCallback(
+    (entry: MemoryEntry) => {
+      if (!memory || deletingMemoryKey) {
+        return;
+      }
+      void persistMemoryUpdate(
+        {
+          ...memory,
+          entries: memory.entries.filter((item) => item.sessionId !== entry.sessionId),
+        },
+        `entry:${entry.sessionId}`,
+      );
+    },
+    [deletingMemoryKey, memory, persistMemoryUpdate],
   );
 
   if (isGuest) {
@@ -296,6 +465,13 @@ export function GrowthPanel({ isGuest, onGoToAccount }: GrowthPanelProps) {
             <ExpressionMasteryTabs trackedExpressions={trackedExpressions} />
           </div>
         </div>
+
+        <RememberedAboutYou
+          memory={memory}
+          deletingKey={deletingMemoryKey}
+          onDeleteFact={handleDeleteFact}
+          onDeleteEntry={handleDeleteEntry}
+        />
 
         <div>
           <div className="section-title">最近点评</div>

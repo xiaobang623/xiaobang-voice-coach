@@ -1,21 +1,37 @@
 /** Shared post-processing for memory extraction (used by report-server + Vercel). */
 
-export const MEMORY_SYSTEM_PROMPT = `You are an English speaking coach building a compact learner profile from one conversation.
+export const MEMORY_SYSTEM_PROMPT = `You are an English speaking coach building a two-layer memory from one conversation.
 Return ONLY valid JSON (no markdown fences) matching this schema:
 {
-  "userLevel": "beginner" | "intermediate" | "advanced",
-  "topics": ["string"],
-  "frequentMistakes": ["string"],
-  "coachNotes": "string"
+  "summary": {
+    "userLevel": "beginner" | "intermediate" | "advanced",
+    "topics": ["string"],
+    "frequentMistakes": ["string"],
+    "personalFacts": ["string"],
+    "coachNotes": "string"
+  },
+  "entry": {
+    "topic": "string",
+    "highlights": "string",
+    "mistakes": "string",
+    "storyNotes": "string"
+  }
 }
 
 Field rules:
 - userLevel: infer from the USER's English in the transcript; keep consistent with the report when sensible.
 - topics: 1–4 short English tags for what the user enjoyed or talked about (e.g. "travel", "work stress").
 - frequentMistakes: up to 5 concise patterns as "wrong → right" or short English phrases the coach should watch for next time. Pull from the report corrections when useful.
+- personalFacts: stable personal facts only (job, pets, hobbies, family, long-running goals). English only, each <=15 words, max 8. Do not include one-off events here unless they reveal a stable fact.
 - coachNotes: 1–2 English sentences the Coach can use internally next session (tone, confidence, recurring habits). No Chinese.
+- entry.topic: this conversation topic, <=6 words.
+- entry.highlights: one learning highlight from this session, <=20 words.
+- entry.mistakes: main error pattern from this session, <=20 words, or "".
+- entry.storyNotes: concrete user story / recent life update from this session, <=20 words, or "".
 
-If a previous profile is provided, MERGE: keep still-relevant topics and mistakes, drop stale ones, refine userLevel gradually. Do not invent facts not supported by the transcript or report.`;
+If a previous profile is provided, MERGE: keep still-relevant topics, mistakes, personal facts, and coach notes; drop stale or unsupported details; refine userLevel gradually.
+If an "Entry likely to be archived" is provided, compress any important long-term detail from it into summary.coachNotes or summary.personalFacts before it disappears from the recent stream.
+Do not invent facts not supported by the transcript, report, previous profile, or archived entry.`;
 
 const VALID_LEVELS = new Set(["beginner", "intermediate", "advanced"]);
 const VALID_SOURCE_TYPES = new Set(["correction", "sayBetter", "newExpression"]);
@@ -56,6 +72,25 @@ function normalizeStringList(raw, maxItems) {
     }
   }
   return result;
+}
+
+function limitWords(raw, maxWords) {
+  const value = String(raw ?? "").trim().replace(/\s+/g, " ");
+  if (!value) {
+    return "";
+  }
+  const words = value.split(" ");
+  if (words.length <= maxWords) {
+    return value;
+  }
+  return words.slice(0, maxWords).join(" ");
+}
+
+function normalizePersonalFacts(raw) {
+  return normalizeStringList(raw, 12)
+    .map((fact) => limitWords(fact, 15))
+    .filter(Boolean)
+    .slice(0, 8);
 }
 
 export function normalizeExpressionKey(raw) {
@@ -249,19 +284,38 @@ export function buildTrackedExpressionsFromReport(report, options = {}) {
 }
 
 export function postProcessMemory(raw, options = {}) {
-  const coachNotes = String(raw.coachNotes ?? raw.notes ?? "").trim();
+  const rawSummary =
+    raw?.summary && typeof raw.summary === "object" ? raw.summary : raw && typeof raw === "object" ? raw : {};
+  const rawEntry = raw?.entry && typeof raw.entry === "object" ? raw.entry : {};
+  const previousSummary = options.previousSummary && typeof options.previousSummary === "object"
+    ? options.previousSummary
+    : {};
+
+  const coachNotes = String(rawSummary.coachNotes ?? rawSummary.notes ?? "").trim();
   const updatedAt = new Date().toISOString();
   const baseMemory = {
-    userLevel: normalizeUserLevel(raw.userLevel),
-    topics: normalizeStringList(raw.topics, 4),
-    frequentMistakes: normalizeStringList(raw.frequentMistakes, 5),
+    userLevel: normalizeUserLevel(rawSummary.userLevel ?? previousSummary.userLevel),
+    topics: normalizeStringList(rawSummary.topics ?? previousSummary.topics, 4),
+    frequentMistakes: normalizeStringList(
+      rawSummary.frequentMistakes ?? previousSummary.frequentMistakes,
+      5,
+    ),
+    personalFacts: normalizePersonalFacts(rawSummary.personalFacts ?? previousSummary.personalFacts),
     coachNotes: coachNotes.slice(0, 400),
     updatedAt,
   };
 
   const previousTrackedExpressions = normalizeTrackedExpressions(
-    options.previousSummary?.trackedExpressions,
+    previousSummary.trackedExpressions,
   );
+
+  const previousEntries = normalizeMemoryEntries(options.previousEntries);
+  const entry = normalizeMemoryEntry(rawEntry, {
+    sessionId: options.sessionId,
+    createdAt: updatedAt,
+    fallbackTopic: options.report?.growth?.topic,
+  });
+  const entries = [...previousEntries, entry].slice(-20);
 
   try {
     const incomingTrackedExpressions = buildTrackedExpressionsFromReport(options.report, {
@@ -269,7 +323,7 @@ export function postProcessMemory(raw, options = {}) {
       ownerKey: options.ownerKey,
     });
 
-    return {
+    const summary = {
       ...baseMemory,
       trackedExpressions: mergeTrackedExpressions(
         previousTrackedExpressions,
@@ -277,14 +331,56 @@ export function postProcessMemory(raw, options = {}) {
         updatedAt,
       ),
     };
+    return { summary, entries };
   } catch (error) {
     console.warn(
       "[memory] trackedExpressions mapping failed:",
       error instanceof Error ? error.message : error,
     );
     return {
-      ...baseMemory,
-      trackedExpressions: previousTrackedExpressions,
+      summary: {
+        ...baseMemory,
+        trackedExpressions: previousTrackedExpressions,
+      },
+      entries,
     };
   }
+}
+
+export function normalizeMemoryEntry(raw, options = {}) {
+  const createdAt = String(options.createdAt ?? raw?.createdAt ?? new Date().toISOString());
+  const sessionId = String(raw?.sessionId ?? options.sessionId ?? "").trim();
+
+  return {
+    sessionId: sessionId || `memory-${stableHash(`${createdAt}:${JSON.stringify(raw ?? {})}`)}`,
+    topic: limitWords(raw?.topic ?? options.fallbackTopic ?? "practice", 6),
+    highlights: limitWords(raw?.highlights, 20),
+    mistakes: limitWords(raw?.mistakes, 20),
+    storyNotes: limitWords(raw?.storyNotes, 20),
+    createdAt,
+  };
+}
+
+export function normalizeMemoryEntries(raw) {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+
+  const result = [];
+  const seen = new Set();
+  for (const item of raw) {
+    if (!item || typeof item !== "object") {
+      continue;
+    }
+    const entry = normalizeMemoryEntry(item, { createdAt: item.createdAt });
+    if (!entry.sessionId || seen.has(entry.sessionId)) {
+      continue;
+    }
+    seen.add(entry.sessionId);
+    result.push(entry);
+  }
+
+  return result
+    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+    .slice(-20);
 }

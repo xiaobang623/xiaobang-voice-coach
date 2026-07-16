@@ -1,11 +1,11 @@
-import type { MemorySummary, TalkDirection } from "../types";
+import type { MemorySummary, TalkDirection, UserMemory } from "../types";
 import { formatMemoryBlock } from "../config/session";
 
 export interface FetchAiDirectionsInput {
   title: string;
   description?: string;
   promptSeed?: string;
-  userMemory?: MemorySummary | null;
+  userMemory?: UserMemory | MemorySummary | null;
   userId?: string;
   guestId?: string;
   sessionId?: string;
@@ -58,18 +58,23 @@ export async function fetchAiDirections(input: FetchAiDirectionsInput): Promise<
   }
 }
 
-function formatDirectionMemoryBlock(memory?: MemorySummary | null): string | undefined {
+function getMemorySummary(memory: UserMemory | MemorySummary): MemorySummary {
+  return "summary" in memory ? memory.summary : memory;
+}
+
+function formatDirectionMemoryBlock(memory?: UserMemory | MemorySummary | null): string | undefined {
   if (!memory) {
     return undefined;
   }
 
+  const summary = getMemorySummary(memory);
   const parts: string[] = [];
   const base = formatMemoryBlock(memory);
   if (base) {
     parts.push(base);
   }
 
-  const dueExpressions = memory.trackedExpressions
+  const dueExpressions = summary.trackedExpressions
     .filter((expression) => expression.status !== "mastered")
     .slice(0, 5)
     .map((expression) => expression.targetText.trim())

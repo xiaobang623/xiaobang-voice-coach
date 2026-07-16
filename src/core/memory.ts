@@ -1,9 +1,10 @@
-import type { MemorySummary, ReportJSON } from "../types";
+import type { MemoryEntry, MemorySummary, ReportJSON, UserMemory } from "../types";
 
 export interface ExtractMemoryInput {
   transcript: string;
   report: ReportJSON;
   previousSummary: MemorySummary | null;
+  previousEntries?: MemoryEntry[];
   userId?: string;
   guestId?: string;
   sessionId?: string;
@@ -22,7 +23,7 @@ async function readResponseErrorDetail(response: Response): Promise<string> {
   }
 }
 
-export async function extractMemory(input: ExtractMemoryInput): Promise<MemorySummary> {
+export async function extractMemory(input: ExtractMemoryInput): Promise<UserMemory> {
   const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
   const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
@@ -55,5 +56,16 @@ export async function extractMemory(input: ExtractMemoryInput): Promise<MemorySu
     throw new Error(detail || `记忆提取失败（${response.status}）`);
   }
 
-  return (await response.json()) as MemorySummary;
+  const payload = (await response.json()) as UserMemory | MemorySummary;
+
+  if ("summary" in payload && Array.isArray(payload.entries)) {
+    return payload;
+  }
+
+  // Backward compatibility for the optional Supabase Edge Function fallback if
+  // it still returns the old single-summary shape.
+  return {
+    summary: payload as MemorySummary,
+    entries: input.previousEntries ?? [],
+  };
 }

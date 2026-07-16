@@ -1,6 +1,10 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { MEMORY_SYSTEM_PROMPT, postProcessMemory } from "../_shared/memoryPostProcess.ts";
 
+// TODO(memory-v2): this Supabase Edge Function is the backup extraction path.
+// The primary Vercel api/extract-memory.js path now writes { summary, entries }.
+// Keep VITE_USE_SUPABASE_FUNCTIONS=false until this backup path is fully synced.
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",

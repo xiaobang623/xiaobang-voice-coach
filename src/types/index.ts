@@ -195,8 +195,31 @@ export interface MemorySummary {
   topics: string[];
   frequentMistakes: string[];
   trackedExpressions: TrackedExpression[];
+  /** Stable personal facts the Coach may naturally remember. English, <=15 words each, max 8. */
+  personalFacts: string[];
   coachNotes: string;
   updatedAt: string;
+}
+
+/** One recent conversation memory stored in memory.entries. */
+export interface MemoryEntry {
+  sessionId: string;
+  /** This session's topic, <=6 words. */
+  topic: string;
+  /** Learning highlight, <=20 words. */
+  highlights: string;
+  /** Main mistake, <=20 words; may be empty. */
+  mistakes: string;
+  /** Personal story / life update from this session, <=20 words; may be empty. */
+  storyNotes: string;
+  /** ISO timestamp. */
+  createdAt: string;
+}
+
+/** Full two-layer memory payload for one registered learner. */
+export interface UserMemory {
+  summary: MemorySummary;
+  entries: MemoryEntry[];
 }
 
 export interface FrequentMistakeStat {
@@ -234,6 +257,8 @@ export interface GrowthPageData {
   history: ReportHistoryItem[];
   /** Current memory.summary.trackedExpressions for the mastery view. */
   trackedExpressions: TrackedExpression[];
+  /** Two-layer learner memory shown in the growth page and used for deletion. */
+  memory?: UserMemory | null;
   /**
    * How often each `sessions.topic` id appears in the user's history,
    * e.g. `{ daily: 5, food: 3 }`. Used to sort home topic cards by habit.

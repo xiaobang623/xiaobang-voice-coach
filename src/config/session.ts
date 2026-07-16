@@ -1,4 +1,4 @@
-import type { MemorySummary, SpeedOption, TaskScenario, VoiceOption } from "../types";
+import type { MemoryEntry, MemorySummary, SpeedOption, TaskScenario, UserMemory, VoiceOption } from "../types";
 
 /**
  * S2S-Omni (O2.0) official voices for volc.speech.dialog.
@@ -44,7 +44,9 @@ const BASE_SYSTEM_ROLE = [
  * Merge the base persona with the selected topic's promptSeed and optional
  * learner memory so the Coach can personalize without breaking the topic opener.
  */
-export function buildSystemPrompt(promptSeed?: string, memory?: MemorySummary | null): string {
+type MemoryInput = MemorySummary | UserMemory | null | undefined;
+
+export function buildSystemPrompt(promptSeed?: string, memory?: MemoryInput): string {
   const seed = promptSeed?.trim();
   const topicLine = seed
     ? `Use this as the starting vibe, not a strict agenda: ${seed} If it starts to feel finished, naturally drift to a nearby topic like a friend would.`
@@ -64,7 +66,7 @@ export function buildSystemPrompt(promptSeed?: string, memory?: MemorySummary | 
  */
 export function buildTaskSystemPrompt(
   scenario: TaskScenario,
-  memory?: MemorySummary | null,
+  memory?: MemoryInput,
 ): string {
   const goalBlock = scenario.goals
     .map((goal, index) => `Sub-goal ${index + 1}: ${goal.coachHint}`)
@@ -97,29 +99,97 @@ export function buildTaskSystemPrompt(
  * system prompt. Exported so other prompt builders (e.g. AI opening-direction
  * generation) can reuse the exact same phrasing instead of re-deriving it.
  */
-export function formatMemoryBlock(memory?: MemorySummary | null): string {
+function splitMemory(memory?: MemoryInput): { summary: MemorySummary; entries: MemoryEntry[] } | null {
   if (!memory) {
+    return null;
+  }
+
+  if ("summary" in memory) {
+    return {
+      summary: memory.summary,
+      entries: Array.isArray(memory.entries) ? memory.entries : [],
+    };
+  }
+
+  return { summary: memory, entries: [] };
+}
+
+function estimateMemoryTokens(text: string): number {
+  const cjkChars = text.match(/[\u3400-\u9fff]/g)?.length ?? 0;
+  const nonCjkChars = text.replace(/[\u3400-\u9fff]/g, "").length;
+  return Math.ceil(cjkChars * 0.6 + nonCjkChars / 4);
+}
+
+function buildEntryLine(entry: MemoryEntry): string {
+  const parts = [
+    entry.topic ? `topic: ${entry.topic}` : "",
+    entry.highlights ? `highlight: ${entry.highlights}` : "",
+    entry.mistakes ? `mistake: ${entry.mistakes}` : "",
+    entry.storyNotes ? `story: ${entry.storyNotes}` : "",
+  ].filter(Boolean);
+  return `- ${entry.createdAt.slice(0, 10)} — ${parts.join("; ")}.`;
+}
+
+function logMemoryBudget(block: string): void {
+  if (typeof console !== "undefined") {
+    console.debug("[memory] prompt block estimated tokens:", estimateMemoryTokens(block));
+  }
+}
+
+export function formatMemoryBlock(memory?: MemoryInput): string {
+  const parsed = splitMemory(memory);
+  if (!parsed) {
     return "";
   }
 
+  const { summary, entries } = parsed;
   const parts: string[] = [];
-  parts.push(`You have spoken with this learner before (level: ${memory.userLevel}).`);
+  parts.push(`You have spoken with this learner before (level: ${summary.userLevel}).`);
 
-  if (memory.topics.length > 0) {
-    parts.push(`They enjoy talking about: ${memory.topics.join(", ")}.`);
+  if (summary.topics.length > 0) {
+    parts.push(`They enjoy talking about: ${summary.topics.join(", ")}.`);
   }
 
-  if (memory.frequentMistakes.length > 0) {
-    parts.push(`Gently watch for: ${memory.frequentMistakes.join("; ")}.`);
+  if (summary.frequentMistakes.length > 0) {
+    parts.push(`Gently watch for: ${summary.frequentMistakes.join("; ")}.`);
   }
 
-  if (memory.coachNotes.trim()) {
-    parts.push(memory.coachNotes.trim());
+  if (summary.personalFacts.length > 0) {
+    parts.push(`Stable personal facts: ${summary.personalFacts.join("; ")}.`);
+  }
+
+  if (summary.coachNotes.trim()) {
+    parts.push(summary.coachNotes.trim());
   }
 
   parts.push(
-    "Weave this in naturally — do not list these facts aloud or sound like you are reading a file.",
+    "Use memory like a friend: mention one relevant old detail only when it naturally fits.",
+    "Never say 'Last time you said...' or read memories as a list. Never bring up more than one old thing in one reply.",
   );
 
-  return parts.join(" ");
+  const budget = 500;
+  const blockParts = [`Learner memory (for you only): ${parts.join(" ")}`];
+  const sortedEntries = [...entries]
+    .filter((entry) => entry.topic || entry.highlights || entry.mistakes || entry.storyNotes)
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+  if (sortedEntries.length > 0) {
+    const header = "Recent conversation memories, newest first:";
+    let candidate = `${blockParts.join(" ")} ${header}`;
+    if (estimateMemoryTokens(candidate) <= budget) {
+      blockParts.push(header);
+      for (const entry of sortedEntries) {
+        const line = buildEntryLine(entry);
+        candidate = `${blockParts.join(" ")} ${line}`;
+        if (estimateMemoryTokens(candidate) > budget) {
+          break;
+        }
+        blockParts.push(line);
+      }
+    }
+  }
+
+  const block = blockParts.join(" ");
+  logMemoryBudget(block);
+  return block;
 }

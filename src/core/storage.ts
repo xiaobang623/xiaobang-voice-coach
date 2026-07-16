@@ -2,12 +2,14 @@ import type {
   Correction,
   GrowthPageData,
   GrowthStats,
+  MemoryEntry,
   MemorySummary,
   ReportHistoryItem,
   ReportJSON,
   TrackedExpression,
   TrackedExpressionSourceType,
   TrackedExpressionStatus,
+  UserMemory,
   UserLevel,
   UserPreferences,
 } from "../types";
@@ -74,6 +76,12 @@ function normalizeMemorySummary(raw: unknown): MemorySummary | null {
     ? record.frequentMistakes.map((item) => String(item).trim()).filter(Boolean).slice(0, 5)
     : [];
   const trackedExpressions = normalizeTrackedExpressions(record.trackedExpressions);
+  const personalFacts = Array.isArray(record.personalFacts)
+    ? record.personalFacts
+        .map((item) => String(item).trim())
+        .filter(Boolean)
+        .slice(0, 8)
+    : [];
   const coachNotes = String(record.coachNotes ?? record.notes ?? "").trim();
 
   return {
@@ -81,8 +89,62 @@ function normalizeMemorySummary(raw: unknown): MemorySummary | null {
     topics,
     frequentMistakes,
     trackedExpressions,
+    personalFacts,
     coachNotes: coachNotes.slice(0, 400),
     updatedAt: String(record.updatedAt ?? new Date().toISOString()),
+  };
+}
+
+function limitWords(value: string, maxWords: number): string {
+  const words = value.trim().replace(/\s+/g, " ").split(" ").filter(Boolean);
+  return words.slice(0, maxWords).join(" ");
+}
+
+function normalizeMemoryEntries(raw: unknown): MemoryEntry[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+
+  const result: MemoryEntry[] = [];
+  const seenSessionIds = new Set<string>();
+
+  for (const item of raw) {
+    if (!item || typeof item !== "object") {
+      continue;
+    }
+
+    const record = item as Record<string, unknown>;
+    const sessionId = String(record.sessionId ?? "").trim();
+    if (!sessionId || seenSessionIds.has(sessionId)) {
+      continue;
+    }
+
+    const createdAt = String(record.createdAt ?? new Date().toISOString());
+    result.push({
+      sessionId,
+      topic: limitWords(String(record.topic ?? "practice"), 6),
+      highlights: limitWords(String(record.highlights ?? ""), 20),
+      mistakes: limitWords(String(record.mistakes ?? ""), 20),
+      storyNotes: limitWords(String(record.storyNotes ?? ""), 20),
+      createdAt,
+    });
+    seenSessionIds.add(sessionId);
+  }
+
+  return result
+    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+    .slice(-20);
+}
+
+function normalizeUserMemory(summaryRaw: unknown, entriesRaw: unknown): UserMemory | null {
+  const summary = normalizeMemorySummary(summaryRaw);
+  if (!summary) {
+    return null;
+  }
+
+  return {
+    summary,
+    entries: normalizeMemoryEntries(entriesRaw),
   };
 }
 
@@ -290,7 +352,7 @@ export async function persistGuestSessionReport(input: PersistGuestSessionInput)
 }
 
 /** Load the learner memory profile for the signed-in registered user. */
-export async function loadUserMemory(): Promise<MemorySummary | null> {
+export async function loadUserMemory(): Promise<UserMemory | null> {
   if (!supabase) {
     return null;
   }
@@ -302,7 +364,7 @@ export async function loadUserMemory(): Promise<MemorySummary | null> {
 
   const { data, error } = await supabase
     .from("memory")
-    .select("summary")
+    .select("summary, entries")
     .eq("user_id", userId)
     .maybeSingle();
 
@@ -311,11 +373,11 @@ export async function loadUserMemory(): Promise<MemorySummary | null> {
     return null;
   }
 
-  return normalizeMemorySummary(data?.summary);
+  return normalizeUserMemory(data?.summary, data?.entries);
 }
 
 /** Save the merged learner memory profile for the current registered user. */
-export async function upsertUserMemory(summary: MemorySummary): Promise<void> {
+export async function upsertUserMemory(memory: UserMemory): Promise<void> {
   if (!supabase) {
     return;
   }
@@ -328,7 +390,8 @@ export async function upsertUserMemory(summary: MemorySummary): Promise<void> {
   const { error } = await supabase.from("memory").upsert(
     {
       user_id: userId,
-      summary,
+      summary: memory.summary,
+      entries: memory.entries,
       updated_at: new Date().toISOString(),
     },
     { onConflict: "user_id" },
@@ -336,7 +399,10 @@ export async function upsertUserMemory(summary: MemorySummary): Promise<void> {
 
   if (error) {
     console.warn("[storage] failed to save memory:", error.message);
+    throw new Error(error.message);
   }
+
+  invalidateGrowthCache();
 }
 
 /** Load practice defaults for the signed-in registered user. */
@@ -470,7 +536,7 @@ function buildHistorySummaries(rows: ReportHistoryRow[]): ReportHistoryItem[] {
 function buildGrowthStats(
   sessions: Array<{ created_at: string; duration_seconds: number | null }>,
   reportRows: Array<{ payload: ReportJSON | null }>,
-  memorySummary: unknown,
+  memorySummary: MemorySummary | null,
 ): GrowthStats {
   const dayKeys = sessions.map((row) => toDayKey(row.created_at));
   const streaks = computeStreaks(dayKeys);
@@ -483,7 +549,6 @@ function buildGrowthStats(
     }
   }
 
-  const memory = normalizeMemorySummary(memorySummary);
   const latestReport = reportRows[0]?.payload ?? undefined;
 
   return {
@@ -491,7 +556,7 @@ function buildGrowthStats(
     totalDurationSeconds: sessions.reduce((sum, row) => sum + (row.duration_seconds ?? 0), 0),
     currentStreakDays: streaks.current,
     longestStreakDays: streaks.longest,
-    latestUserLevel: memory?.userLevel ?? latestReport?.userLevel ?? null,
+    latestUserLevel: memorySummary?.userLevel ?? latestReport?.userLevel ?? null,
     frequentMistakes: aggregateFrequentMistakes(allCorrections),
   };
 }
@@ -535,7 +600,7 @@ export async function loadGrowthPageData(): Promise<GrowthPageData | null> {
       .select("created_at, session_id, payload, sessions(topic, duration_seconds)")
       .order("created_at", { ascending: false })
       .limit(GROWTH_REPORT_LIMIT),
-    supabase.from("memory").select("summary").eq("user_id", userId).maybeSingle(),
+    supabase.from("memory").select("summary, entries").eq("user_id", userId).maybeSingle(),
   ]);
 
   if (sessionsResult.error) {
@@ -550,12 +615,13 @@ export async function loadGrowthPageData(): Promise<GrowthPageData | null> {
 
   const sessions = sessionsResult.data ?? [];
   const reportRows = (reportsResult.data ?? []) as ReportHistoryRow[];
-  const memory = normalizeMemorySummary(memoryResult.data?.summary);
+  const memory = normalizeUserMemory(memoryResult.data?.summary, memoryResult.data?.entries);
 
   return {
-    stats: buildGrowthStats(sessions, reportRows, memory),
+    stats: buildGrowthStats(sessions, reportRows, memory?.summary ?? null),
     history: buildHistorySummaries(reportRows),
-    trackedExpressions: memory?.trackedExpressions ?? [],
+    trackedExpressions: memory?.summary.trackedExpressions ?? [],
+    memory,
     topicCounts: countTopicFrequency(sessions),
   };
 }

@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from "react";
-import type { MemorySummary, TalkDirection } from "../types";
+import type { MemorySummary, TalkDirection, UserMemory } from "../types";
 import { fetchAiDirections } from "../core/directions";
 
 export interface OpeningDirectionsTarget {
@@ -33,7 +33,7 @@ export function useOpeningDirections() {
   const prefetch = useCallback(
     (
       target: OpeningDirectionsTarget | null,
-      userMemory: MemorySummary | null,
+      userMemory: UserMemory | MemorySummary | null,
       actor: OpeningDirectionsActor,
     ) => {
       if (!target || requestedTopicIdRef.current === target.topicId) {

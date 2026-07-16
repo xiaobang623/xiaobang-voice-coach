@@ -91,6 +91,15 @@ const server = createServer(async (req, res) => {
     const previousBlock = input.previousSummary
       ? `Previous profile:\n${JSON.stringify(input.previousSummary, null, 2)}\n\n`
       : "";
+    const previousEntries = Array.isArray(input.previousEntries) ? input.previousEntries.slice(-20) : [];
+    const entriesBlock =
+      previousEntries.length > 0
+        ? `Recent memory entries (oldest to newest):\n${JSON.stringify(previousEntries, null, 2)}\n\n`
+        : "";
+    const archiveBlock =
+      previousEntries.length >= 20
+        ? `Entry likely to be archived after adding this session:\n${JSON.stringify(previousEntries[0], null, 2)}\n\n`
+        : "";
     const reportBlock = input.report
       ? `Latest report:\n${JSON.stringify(input.report, null, 2)}\n\n`
       : "";
@@ -110,7 +119,7 @@ const server = createServer(async (req, res) => {
             { role: "system", content: MEMORY_SYSTEM_PROMPT },
             {
               role: "user",
-              content: `${previousBlock}${reportBlock}Transcript:\n${input.transcript}`,
+              content: `${previousBlock}${entriesBlock}${archiveBlock}${reportBlock}Session ID: ${input.sessionId ?? ""}\nTranscript:\n${input.transcript}`,
             },
           ],
         }),
@@ -136,6 +145,8 @@ const server = createServer(async (req, res) => {
         postProcessMemory(raw, {
           report: input.report,
           previousSummary: input.previousSummary,
+          previousEntries: input.previousEntries,
+          sessionId: input.sessionId,
           ownerKey: input.userId ?? input.guestId ?? "memory",
         }),
       );

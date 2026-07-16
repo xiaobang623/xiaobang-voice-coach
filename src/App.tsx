@@ -43,6 +43,7 @@ import type {
   ReportReusedExpression,
   SessionSettings,
   TaskScenario,
+  UserMemory,
 } from "./types";
 
 type PracticeScreen = "topics" | "chat" | "report";
@@ -58,7 +59,7 @@ function App() {
   const [report, setReport] = useState<ReportJSON | null>(null);
   const [reportLoading, setReportLoading] = useState(false);
   const [reportError, setReportError] = useState<string | null>(null);
-  const [userMemory, setUserMemory] = useState<MemorySummary | null>(null);
+  const [userMemory, setUserMemory] = useState<UserMemory | null>(null);
   const [homeGrowthData, setHomeGrowthData] = useState<GrowthPageData | null>(null);
   const [homeInsightLoading, setHomeInsightLoading] = useState(false);
   const sessionIdRef = useRef(crypto.randomUUID());
@@ -320,13 +321,13 @@ function App() {
       });
 
       let reportForSession: ReportJSON = generatedReport;
-      let memoryForExtraction = userMemory;
+      let memoryForExtraction: MemorySummary | null = userMemory?.summary ?? null;
       let reuseUpdatedMemory: MemorySummary | null = null;
       const reusedExpressions: ReportReusedExpression[] = [];
 
       if (!isAnonymous && userMemory) {
         try {
-          const reuseResult = applyTrackedExpressionReuse(userMemory, transcript);
+          const reuseResult = applyTrackedExpressionReuse(userMemory.summary, transcript);
           if (reuseResult.reusedExpressions.length > 0) {
             reuseUpdatedMemory = reuseResult.summary;
             memoryForExtraction = reuseResult.summary;
@@ -370,15 +371,20 @@ function App() {
             transcript,
             report: reportForSession,
             previousSummary: memoryForExtraction,
+            previousEntries: userMemory?.entries ?? [],
             userId: usageActor.userId ?? undefined,
             guestId: usageActor.guestId ?? undefined,
             sessionId,
           });
-          const nextMemory = preserveTrackedExpressionReuse(
-            extractedMemory,
+          const nextSummary = preserveTrackedExpressionReuse(
+            extractedMemory.summary,
             reuseUpdatedMemory,
             reusedExpressions,
           );
+          const nextMemory: UserMemory = {
+            summary: nextSummary,
+            entries: extractedMemory.entries,
+          };
           await upsertUserMemory(nextMemory);
           setUserMemory(nextMemory);
         } catch (memoryError) {
@@ -387,8 +393,12 @@ function App() {
             memoryError instanceof Error ? memoryError.message : memoryError,
           );
           if (reuseUpdatedMemory) {
-            await upsertUserMemory(reuseUpdatedMemory);
-            setUserMemory(reuseUpdatedMemory);
+            const fallbackMemory: UserMemory = {
+              summary: reuseUpdatedMemory,
+              entries: userMemory?.entries ?? [],
+            };
+            await upsertUserMemory(fallbackMemory);
+            setUserMemory(fallbackMemory);
           }
         }
       } else if (usageActor.guestId) {

@@ -32,9 +32,28 @@ function compactMemoryForPrompt(summary) {
     userLevel: summary.userLevel,
     topics: Array.isArray(summary.topics) ? summary.topics : [],
     frequentMistakes: Array.isArray(summary.frequentMistakes) ? summary.frequentMistakes : [],
+    personalFacts: Array.isArray(summary.personalFacts) ? summary.personalFacts : [],
     coachNotes: summary.coachNotes ?? summary.notes ?? "",
     updatedAt: summary.updatedAt,
   };
+}
+
+function compactEntriesForPrompt(entries) {
+  if (!Array.isArray(entries)) {
+    return [];
+  }
+
+  return entries
+    .map((entry) => ({
+      sessionId: entry?.sessionId,
+      topic: entry?.topic ?? "",
+      highlights: entry?.highlights ?? "",
+      mistakes: entry?.mistakes ?? "",
+      storyNotes: entry?.storyNotes ?? "",
+      createdAt: entry?.createdAt,
+    }))
+    .filter((entry) => entry.sessionId || entry.topic || entry.storyNotes)
+    .slice(-20);
 }
 
 export default async function handler(req, res) {
@@ -68,8 +87,20 @@ export default async function handler(req, res) {
   }
 
   const compactPreviousSummary = compactMemoryForPrompt(input.previousSummary);
+  const compactPreviousEntries = compactEntriesForPrompt(input.previousEntries);
+  const archiveCandidate =
+    compactPreviousEntries.length >= 20 ? compactPreviousEntries[0] : null;
   const previousBlock = compactPreviousSummary
     ? `Previous profile:\n${JSON.stringify(compactPreviousSummary, null, 2)}\n\n`
+    : "";
+
+  const entriesBlock =
+    compactPreviousEntries.length > 0
+      ? `Recent memory entries (oldest to newest):\n${JSON.stringify(compactPreviousEntries, null, 2)}\n\n`
+      : "";
+
+  const archiveBlock = archiveCandidate
+    ? `Entry likely to be archived after adding this session:\n${JSON.stringify(archiveCandidate, null, 2)}\n\n`
     : "";
 
   const reportBlock = input.report
@@ -91,7 +122,7 @@ export default async function handler(req, res) {
           { role: "system", content: MEMORY_SYSTEM_PROMPT },
           {
             role: "user",
-            content: `${previousBlock}${reportBlock}Transcript:\n${input.transcript}`,
+            content: `${previousBlock}${entriesBlock}${archiveBlock}${reportBlock}Session ID: ${input.sessionId ?? ""}\nTranscript:\n${input.transcript}`,
           },
         ],
       }),
@@ -127,6 +158,8 @@ export default async function handler(req, res) {
       postProcessMemory(raw, {
         report: input.report,
         previousSummary: input.previousSummary,
+        previousEntries: input.previousEntries,
+        sessionId: input.sessionId,
         ownerKey: input.userId ?? input.guestId ?? "memory",
       }),
     );
