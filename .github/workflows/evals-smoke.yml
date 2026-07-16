@@ -17,4 +17,4 @@ jobs:
         with:
           node-version: 24
       - name: Run deterministic evals (smoke)
-        run: node evals/run.mjs --smoke
+        run: node evals/run.mjs --smoke --no-write

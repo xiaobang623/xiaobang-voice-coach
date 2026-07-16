@@ -13,6 +13,7 @@
 | `npm run evals:memory` | 只跑记忆提取套件 | 同上 |
 | `npm run evals:directions` | 只跑开场方向套件 | 同上 |
 | `node evals/run.mjs --no-judge` | 跳过 LLM judge，只留确定性断言 | 更快更省 |
+| `node evals/run.mjs --smoke --no-write` | 只执行 gate，不改写结果文件 | CI / pre-push 使用 |
 
 退出码非 0 = gate 未通过（smoke 必须 100%；LLM 套件不得 red）。`git push` 时 pre-push 钩子自动跑 smoke，可用 `SKIP_EVALS=1 git push` 跳过。
 

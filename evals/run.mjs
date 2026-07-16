@@ -7,6 +7,7 @@
  *   node evals/run.mjs --smoke             # 只跑确定性 smoke（零成本，秒级）
  *   node evals/run.mjs --suite report      # 只跑指定套件（逗号分隔）
  *   node evals/run.mjs --no-judge          # 跳过 LLM judge，只跑确定性断言（更快更省）
+ *   node evals/run.mjs --smoke --no-write  # 只做 gate，不改写结果文件（CI / git hook）
  *   node evals/run.mjs --concurrency 5
  *
  * 退出码：任何套件 red、或 smoke 未 100% 通过 → 非 0（可做 CI / git hook gate）。
@@ -38,11 +39,12 @@ const SUITES = {
 };
 
 function parseArgs(argv) {
-  const args = { suites: null, smokeOnly: false, judge: true, concurrency: 3 };
+  const args = { suites: null, smokeOnly: false, judge: true, write: true, concurrency: 3 };
   for (let index = 2; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--smoke") args.smokeOnly = true;
     else if (arg === "--no-judge") args.judge = false;
+    else if (arg === "--no-write") args.write = false;
     else if (arg === "--suite") args.suites = String(argv[++index] ?? "").split(",").map((s) => s.trim()).filter(Boolean);
     else if (arg === "--concurrency") args.concurrency = Math.max(1, Number(argv[++index]) || 3);
     else {
@@ -104,8 +106,12 @@ for (const suiteName of selected) {
 }
 
 printSummaries(summaries);
-const { timestamp } = writeResults({ summaries, caseDetails, meta });
-console.log(`结果已写入 evals/results/latest.md · history.jsonl · runs/${timestamp}.json`);
+if (args.write) {
+  const { timestamp } = writeResults({ summaries, caseDetails, meta });
+  console.log(`结果已写入 evals/results/latest.md · history.jsonl · runs/${timestamp}.json`);
+} else {
+  console.log("Gate 模式：未改写 evals 结果文件");
+}
 
 const smokeSummary = summaries.find((summary) => summary.suite === "smoke");
 const failed =
