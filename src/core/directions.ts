@@ -16,12 +16,12 @@ export interface FetchAiDirectionsInput {
  *
  * NEVER throws — any failure (network, timeout, non-2xx, bad JSON, too few
  * usable items) resolves to `null`. This is a fire-and-forget prefetch: the
- * caller (SessionOpeningGuide) silently falls back to the static
+ * caller (OpeningPrepSheet) silently falls back to the static
  * pickDirections() pool, so the user never sees an error or a stalled UI.
  */
 export async function fetchAiDirections(input: FetchAiDirectionsInput): Promise<TalkDirection[] | null> {
   try {
-    const userMemoryBlock = formatMemoryBlock(input.userMemory ?? null) || undefined;
+    const userMemoryBlock = formatDirectionMemoryBlock(input.userMemory ?? null);
 
     const response = await fetch("/api/generate-directions", {
       method: "POST",
@@ -56,4 +56,30 @@ export async function fetchAiDirections(input: FetchAiDirectionsInput): Promise<
   } catch {
     return null;
   }
+}
+
+function formatDirectionMemoryBlock(memory?: MemorySummary | null): string | undefined {
+  if (!memory) {
+    return undefined;
+  }
+
+  const parts: string[] = [];
+  const base = formatMemoryBlock(memory);
+  if (base) {
+    parts.push(base);
+  }
+
+  const dueExpressions = memory.trackedExpressions
+    .filter((expression) => expression.status !== "mastered")
+    .slice(0, 5)
+    .map((expression) => expression.targetText.trim())
+    .filter(Boolean);
+
+  if (dueExpressions.length > 0) {
+    parts.push(
+      `Useful expressions to invite them to reuse if it feels natural: ${dueExpressions.join("; ")}.`,
+    );
+  }
+
+  return parts.length > 0 ? parts.join(" ") : undefined;
 }

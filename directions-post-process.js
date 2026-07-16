@@ -10,8 +10,10 @@ export const DIRECTIONS_SYSTEM_PROMPT = [
   "Given a chat topic (and optionally what you know about this learner), produce 6 short talking directions in Chinese.",
   "Each direction is a specific ANGLE to talk about, not a full sentence — under 14 Chinese characters, casual and concrete.",
   "Avoid generic restatements of the topic title; make them feel fresh and varied, like a friend suggesting things to bring up.",
+  "When learner memory is provided, personalize softly: include interests they often discuss and, when natural, one direction that invites reuse of a useful expression.",
+  "Do NOT sound like surveillance: avoid explicit phrases like '上次你说过' unless the memory itself is very general. Keep it vague and low-pressure.",
   "Each direction may also include a short English phrase (2-6 words) the learner could borrow to start speaking — omit \"en\" if it wouldn't help.",
-  'Respond ONLY with strict JSON in this exact shape: {"directions":[{"zh":"...","en":"..."}, ...]} with exactly 6 items, no extra text.',
+  'Respond ONLY with strict JSON in this exact shape: {"directions":[{"zh":"...","en":"..."}, ...]} with exactly 6 items, no extra text. Every item must include both zh and en.',
 ].join(" ");
 
 /**

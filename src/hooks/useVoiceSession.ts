@@ -19,6 +19,11 @@ export interface VoiceStartOptions {
   initialGreeting?: string;
   /** Dev typing-test mode: connect without opening the microphone. */
   typingTestMode?: boolean;
+  /**
+   * Prepare-mode: connect the live backend first, but keep user audio muted
+   * until the UI explicitly calls enableInput().
+   */
+  waitForUserReady?: boolean;
 }
 
 export interface VoiceSessionMessage {
@@ -44,6 +49,8 @@ export interface UseVoiceSessionResult {
   /** Resolved ASR provider for the active or last session. */
   activeAsrProvider: ActiveAsrProvider;
   start: (options?: VoiceStartOptions) => Promise<void>;
+  /** Prepare-mode: allow the user's microphone/ASR input to start flowing. */
+  enableInput: () => void;
   /** Dev typing-test: send text instead of speaking (ChatTextQuery). */
   sendTextQuery: (text: string) => void;
   /** End the live voice link but keep on-screen messages. */
@@ -209,6 +216,7 @@ export function useVoiceSession(): UseVoiceSessionResult {
 
   const hintTimerRef = useRef<number | null>(null);
   const statusRef = useRef<VoiceSessionStatus>("ended");
+  const inputEnabledRef = useRef(true);
   const adapterRef = useRef<VoiceAdapter | null>(null);
   const platformNativeAsrRef = useRef<BrowserPlatformNativeAsr | null>(null);
   const activeUserMessageIdRef = useRef<string | null>(null);
@@ -323,6 +331,7 @@ export function useVoiceSession(): UseVoiceSessionResult {
     setHint(null);
     setStartedAt(null);
     setActiveBackend(null);
+    inputEnabledRef.current = true;
     setActiveAsrProvider(null);
     setStatus("ended");
   }, [teardownMic, teardownPlatformNativeAsr, clearListeningDraft]);
@@ -695,12 +704,19 @@ export function useVoiceSession(): UseVoiceSessionResult {
     return true;
   }, [onTranscript, showHint]);
 
+
+  const enableInput = useCallback(() => {
+    inputEnabledRef.current = true;
+    platformNativeAsrRef.current?.resumeAfterPlayback();
+  }, []);
+
   const start = useCallback(async (options?: VoiceStartOptions) => {
     if (statusRef.current === "connecting" || statusRef.current === "active") {
       return;
     }
 
     const skipMic = options?.typingTestMode === true;
+    inputEnabledRef.current = options?.waitForUserReady === true ? false : true;
 
     setErrorMessage(null);
     statusRef.current = "connecting";
@@ -781,6 +797,9 @@ export function useVoiceSession(): UseVoiceSessionResult {
 
       if (shouldUsePlatformNativeAsr) {
         const started = startPlatformNativeAsr(effectiveModelOverrides.platformNativeAsrLocale);
+        if (started && options?.waitForUserReady === true) {
+          platformNativeAsrRef.current?.pauseForPlayback();
+        }
         if (!started) {
           setActiveAsrProvider(PLATFORM_NATIVE_ASR_AUDIO_FALLBACK_PROVIDER);
           showHint("当前浏览器不支持平台原生 ASR，已回退到云端 ASR。");
@@ -843,6 +862,17 @@ export function useVoiceSession(): UseVoiceSessionResult {
 
         processor.onaudioprocess = (audioEvent) => {
           if (statusRef.current !== "active" || !adapterRef.current) {
+            return;
+          }
+
+          if (!inputEnabledRef.current) {
+            inSpeechRef.current = false;
+            firstVoiceAtRef.current = 0;
+            lastVoiceAtRef.current = performance.now();
+            endAsrSentForSilenceRef.current = false;
+            hasVoiceSinceEndAsrRef.current = false;
+            bargeInVoicedFramesRef.current = 0;
+            bargeInHeldChunksRef.current = [];
             return;
           }
 
@@ -1005,6 +1035,7 @@ export function useVoiceSession(): UseVoiceSessionResult {
     activeBackend,
     activeAsrProvider,
     start,
+    enableInput,
     sendTextQuery,
     stop,
     clearConversation,

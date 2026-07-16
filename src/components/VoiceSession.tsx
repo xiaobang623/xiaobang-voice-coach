@@ -344,75 +344,135 @@ function SessionGuideBanner({
 
 const OPENING_GUIDE_DIRECTION_COUNT = 3;
 
-function SessionOpeningGuide({
+function OpeningPrepSheet({
   activeTopic,
   activeTask,
   aiDirections,
+  status,
+  errorMessage,
+  readyPending,
+  onReady,
+  onRetry,
 }: {
   activeTopic?: TopicOption | null;
   activeTask?: TaskScenario | null;
   /**
    * AI-generated directions prefetched when the user picked this topic/task
-   * (see useOpeningDirections). Decided ONCE at mount: if the request hasn't
-   * resolved yet (or failed), we fall back to the static pool for the whole
-   * session — never swap mid-session, and never block on it.
+   * (see useOpeningDirections). The prep page renders static directions
+   * immediately, then softly swaps to AI/personalized directions if they arrive
+   * before the user starts.
    */
   aiDirections?: TalkDirection[] | null;
+  status: "connecting" | "active" | "ended";
+  errorMessage: string | null;
+  readyPending: boolean;
+  onReady: () => void;
+  onRetry: () => void;
 }) {
   const staticPool =
     (activeTask?.directions?.length ? activeTask.directions : undefined) ??
     (activeTopic?.directions?.length ? activeTopic.directions : undefined) ??
     FREE_TALK_DIRECTIONS;
-  const poolRef = useRef<TalkDirection[] | null>(null);
-  if (poolRef.current === null) {
-    poolRef.current = aiDirections && aiDirections.length > 0 ? aiDirections : staticPool;
-  }
-  const pool = poolRef.current;
+  const pool = aiDirections && aiDirections.length > 0 ? aiDirections : staticPool;
   const [shown, setShown] = useState<TalkDirection[]>(() =>
-    pickDirections(pool, OPENING_GUIDE_DIRECTION_COUNT),
+    pickDirections(staticPool, OPENING_GUIDE_DIRECTION_COUNT),
   );
-  const hint = activeTask?.openingHint ?? activeTopic?.openingHint;
+  const appliedAiDirectionsRef = useRef(false);
+
+  useEffect(() => {
+    if (!aiDirections || aiDirections.length === 0 || appliedAiDirectionsRef.current) {
+      return;
+    }
+    appliedAiDirectionsRef.current = true;
+    setShown(pickDirections(aiDirections, OPENING_GUIDE_DIRECTION_COUNT));
+  }, [aiDirections]);
+
+  const title = activeTask ? `先用一句英文进入场景` : "先准备一句，再开口";
+  const subtitle = activeTask
+    ? `「${activeTask.title}」不用演完整，先开个头就行。`
+    : activeTopic
+      ? `聊「${activeTopic.title}」，选一个方向先说一句。`
+      : "选一个方向，先说一句真实想说的英文。";
+  const statusCopy = errorMessage
+    ? { label: "连接没成功", body: "检查麦克风或重试连接", tone: "text-error bg-error-bg border-error/30" }
+    : status === "active"
+      ? { label: "已准备好", body: "点按钮后开始收音", tone: "text-accent-teal-on-canvas bg-accent-teal/14 border-accent-teal/25" }
+      : { label: "连接中", body: "可以先想第一句", tone: "text-accent-gold-on-canvas bg-spark/14 border-spark/25" };
+  const primaryLabel = errorMessage
+    ? "重试连接"
+    : readyPending || status === "connecting"
+      ? "小榜马上就好…"
+      : "我准备好了";
+  const primaryDisabled = !errorMessage && (readyPending || status === "connecting");
 
   return (
-    <li className="animate-fade-up flex w-full items-start gap-2.5">
-      <div className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent-soft ring-2 ring-surface">
-        <Mascot expression="idle" size={32} bob={false} className="translate-y-[1px]" />
-      </div>
-      <div className="min-w-0 flex-1 rounded-[18px] rounded-bl-md border border-white/10 bg-surface-canvas-raised px-4 py-3">
-        <p className="text-[13px] font-medium text-ink-on-canvas">小榜在听，先开口说一句就行 👂</p>
-        {hint ? (
-          <p className="mt-1 text-[12.5px] leading-relaxed text-ink-on-canvas-faint">{hint}</p>
-        ) : null}
-        <div className="mt-2.5 flex flex-col gap-1.5">
+    <li className="animate-fade-up flex h-full min-h-[28rem] items-center py-2">
+      <div className="w-full rounded-[24px] border border-[rgba(244,243,240,0.14)] bg-surface-canvas-raised px-4 py-4 text-ink-on-canvas shadow-elevated md:px-5 md:py-5">
+        <div className="flex items-start gap-3">
+          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-surface-canvas-chip ring-1 ring-[rgba(244,243,240,0.12)]">
+            <Mascot expression={status === "connecting" ? "thinking" : "idle"} size={42} bob={false} />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="text-[12px] font-semibold tracking-[0.08em] text-ink-on-canvas-faint uppercase">
+                开口准备
+              </p>
+              <span className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${statusCopy.tone}`}>
+                {statusCopy.label} · {statusCopy.body}
+              </span>
+            </div>
+            <h2 className="mt-1.5 text-[22px] font-semibold leading-tight tracking-tight text-ink-on-canvas">
+              {title}
+            </h2>
+            <p className="mt-1 text-[13px] leading-relaxed text-ink-on-canvas-soft">
+              {subtitle}
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-4 flex items-center justify-between gap-3">
+          <p className="text-[13px] font-semibold text-ink-on-canvas-soft">选一个方向，借一句开头</p>
+          <button
+            type="button"
+            onClick={() =>
+              setShown((current) => pickDirections(pool, OPENING_GUIDE_DIRECTION_COUNT, current))
+            }
+            className="shrink-0 rounded-full border border-[rgba(244,243,240,0.14)] bg-surface-canvas-chip px-3 py-1.5 text-[12px] font-medium text-ink-on-canvas-soft transition hover:bg-white/10 hover:text-ink-on-canvas active:scale-[0.97]"
+          >
+            🎲 换一批
+          </button>
+        </div>
+
+        <div className="mt-2.5 space-y-2">
           {shown.map((direction) => (
             <div
               key={direction.zh}
-              className="flex flex-wrap items-baseline gap-x-2 rounded-[14px] border border-dashed border-white/20 bg-surface-canvas-chip px-3 py-2"
+              className="w-full rounded-2xl border border-[rgba(244,243,240,0.14)] bg-bg-canvas px-3.5 py-3 text-left"
             >
-              <span className="text-[14px] leading-snug text-ink-on-canvas">{direction.zh}</span>
+              <span className="block text-[15px] font-semibold leading-snug text-ink-on-canvas">
+                {direction.zh}
+              </span>
               {direction.en ? (
-                <span className="text-[12px] italic leading-snug text-ink-on-canvas-soft">
+                <span className="mt-1 block text-[13px] italic leading-snug text-ink-on-canvas-soft">
                   {direction.en}
                 </span>
               ) : null}
             </div>
           ))}
         </div>
-        <div className="mt-2 flex items-center justify-between gap-2">
-          <p className="text-[11.5px] text-ink-on-canvas-faint">
-            {activeTask
-              ? "挑个方向开口说一句，小榜会进入角色接住你"
-              : "挑个方向用英文随便说一句，说错也没关系"}
+
+        <div className="mt-4 grid grid-cols-[1fr_auto] items-center gap-3">
+          <p className="text-[12px] leading-relaxed text-ink-on-canvas-faint">
+            不会写入聊天记录，点按钮后才开始收音。
           </p>
-          <button
-            type="button"
-            onClick={() =>
-              setShown((current) => pickDirections(pool, OPENING_GUIDE_DIRECTION_COUNT, current))
-            }
-            className="shrink-0 rounded-full border border-white/15 bg-[rgba(244,243,240,0.08)] px-2.5 py-1 text-[11px] text-ink-on-canvas-soft transition hover:text-ink-on-canvas"
+          <Button
+            size="md"
+            onClick={errorMessage ? onRetry : onReady}
+            disabled={primaryDisabled}
+            className="!rounded-full !bg-ink-on-canvas !px-5 !text-bg-canvas"
           >
-            🎲 换一批
-          </button>
+            {primaryLabel}
+          </Button>
         </div>
       </div>
     </li>
@@ -488,6 +548,7 @@ export function VoiceSession({
     startedAt,
     activeAsrProvider,
     start,
+    enableInput,
     stop,
     sendTextQuery,
   } = voice;
@@ -499,10 +560,19 @@ export function VoiceSession({
   const [revealedIds, setRevealedIds] = useState<Set<string>>(() => new Set());
   const [controlsOpen, setControlsOpen] = useState(false);
   const [taskCardDismissed, setTaskCardDismissed] = useState(false);
+  const [openingPrepared, setOpeningPrepared] = useState(false);
+  const [readyRequested, setReadyRequested] = useState(false);
+
+  const openingFlowKey = activeTask?.id ?? activeTopic?.id ?? "free-talk";
 
   useEffect(() => {
     setTaskCardDismissed(false);
   }, [activeTask?.id]);
+
+  useEffect(() => {
+    setOpeningPrepared(false);
+    setReadyRequested(false);
+  }, [openingFlowKey]);
 
   const revealMessage = useCallback((id: string) => {
     setRevealedIds((prev) => {
@@ -523,7 +593,7 @@ export function VoiceSession({
   const userHasSpoken = messages.some((message) => message.role === "user" && message.text.trim().length > 0);
   const canGenerateReport = userHasSpoken && !report && !reportLoading;
 
-  const handleStart = useCallback(() => {
+  const handleStart = useCallback((waitForUserReady = false) => {
     void start({
       sessionId: appSessionId,
       userId: usageUserId,
@@ -531,17 +601,41 @@ export function VoiceSession({
       voiceType: voiceTypeRef.current,
       speedRatio: speedRatioRef.current,
       systemPrompt: settings.systemPrompt,
-      // Coach no longer auto-opens; the user speaks first (see SessionOpeningGuide).
+      // Coach no longer auto-opens; the user speaks first after the prep sheet.
       typingTestMode: isTypingTestAvailable() && typingTestMode,
+      waitForUserReady,
     });
   }, [
     start,
     appSessionId,
     usageUserId,
     usageGuestId,
-    settings.systemPrompt,
+      settings.systemPrompt,
     typingTestMode,
   ]);
+
+  const handleOpeningReady = useCallback(() => {
+    if (errorMessage) {
+      setReadyRequested(false);
+      handleStart(true);
+      return;
+    }
+    if (status === "active") {
+      enableInput();
+      setOpeningPrepared(true);
+      setReadyRequested(false);
+      return;
+    }
+    setReadyRequested(true);
+    if (status === "ended") {
+      handleStart(true);
+    }
+  }, [enableInput, errorMessage, handleStart, status]);
+
+  const handleOpeningRetry = useCallback(() => {
+    setReadyRequested(false);
+    handleStart(true);
+  }, [handleStart]);
 
   const handleSendText = useCallback(() => {
     const text = draftText.trim();
@@ -617,9 +711,9 @@ export function VoiceSession({
       }
       if (!userHasSpoken) {
         if (activeTask) {
-          return "你先开口，照着上面的起手句说，小榜会进入角色";
+          return "你先开口，说一句简单英文，小榜会进入角色";
         }
-        return "小榜在听 · 照着上面的起手句先说一句";
+        return "小榜在听 · 先说一句简单英文";
       }
       if (activeAsrProvider === "platform-native-asr") {
         return "平台原生 ASR 已开启，说话会实时转成文字";
@@ -646,9 +740,33 @@ export function VoiceSession({
   const showTaskCard =
     activeTask && !taskCardDismissed && messages.length === 0 && !report;
   const showTaskChecklist = activeTask && taskCardDismissed && !report;
-  const showGuideBanner = isActive && userHasSpoken && !errorMessage && !report;
-  const showOpeningGuide =
-    isActive && !userHasSpoken && !errorMessage && !report && !showTaskCard && !typingTestMode;
+  const shouldUseOpeningPrep =
+    !hasHistory && !report && !typingTestMode && !showTaskCard && !reportLoading;
+  const showOpeningPrep = shouldUseOpeningPrep && !openingPrepared && !userHasSpoken;
+  const showGuideBanner =
+    isActive && (userHasSpoken || openingPrepared) && !errorMessage && !report;
+
+  useEffect(() => {
+    if (!shouldUseOpeningPrep || status !== "ended" || errorMessage) {
+      return;
+    }
+    handleStart(true);
+  }, [errorMessage, handleStart, shouldUseOpeningPrep, status]);
+
+  useEffect(() => {
+    if (!readyRequested || status !== "active") {
+      return;
+    }
+    enableInput();
+    setOpeningPrepared(true);
+    setReadyRequested(false);
+  }, [enableInput, readyRequested, status]);
+
+  useEffect(() => {
+    if (errorMessage) {
+      setReadyRequested(false);
+    }
+  }, [errorMessage]);
 
   return (
     <section className="animate-fade-up flex min-h-0 h-full w-full flex-1 flex-col overflow-hidden bg-bg-canvas text-ink-on-canvas md:mx-auto md:max-w-[40rem] md:rounded-[24px] md:border md:border-white/10">
@@ -768,7 +886,7 @@ export function VoiceSession({
         ref={listRef}
         className="relative z-10 mt-2 min-h-0 flex-1 overflow-y-auto overscroll-contain px-1 md:px-4"
       >
-        {errorMessage ? (
+        {errorMessage && !showOpeningPrep ? (
           <div className="mb-3 rounded-2xl bg-error-bg px-4 py-3 text-sm text-error">
             {errorMessage}
           </div>
@@ -787,11 +905,17 @@ export function VoiceSession({
             </li>
           ) : null}
 
-          {showOpeningGuide ? (
-            <SessionOpeningGuide
+          {showOpeningPrep ? (
+            <OpeningPrepSheet
+              key={openingFlowKey}
               activeTopic={activeTopic}
               activeTask={activeTask}
               aiDirections={aiDirections}
+              status={status}
+              errorMessage={errorMessage}
+              readyPending={readyRequested}
+              onReady={handleOpeningReady}
+              onRetry={handleOpeningRetry}
             />
           ) : null}
 
@@ -864,7 +988,8 @@ export function VoiceSession({
         ) : null}
       </div>
 
-      <div className="relative z-10 shrink-0 rounded-b-[24px] border-t border-white/10 bg-surface-canvas-raised/90 px-4 py-4 backdrop-blur-md md:px-6 md:py-5">
+      {!showOpeningPrep ? (
+        <div className="relative z-10 shrink-0 rounded-b-[24px] border-t border-white/10 bg-surface-canvas-raised/90 px-4 py-4 backdrop-blur-md md:px-6 md:py-5">
           {isTypingTestAvailable() && typingTestMode && isActive ? (
             <form
               className="mb-4 flex gap-2"
@@ -891,7 +1016,7 @@ export function VoiceSession({
             </form>
           ) : null}
 
-          {isActive ? (
+          {isActive && !showOpeningPrep ? (
             <div className="mb-4 flex flex-wrap items-center justify-center gap-2">
               <Button
                 variant="outline"
@@ -917,7 +1042,13 @@ export function VoiceSession({
           ) : null}
 
           <div className="flex flex-col items-center gap-3">
-            {isActive ? (
+            {showOpeningPrep ? (
+              <div className="rounded-2xl border border-white/10 bg-bg-canvas px-4 py-3 text-center">
+                <p className="text-[12.5px] leading-relaxed text-ink-on-canvas-soft">
+                  先在上方选个方向，点「我准备好了」后再开口。
+                </p>
+              </div>
+            ) : isActive ? (
               <div
                 className="relative flex h-[4.5rem] w-[4.5rem] items-center justify-center"
                 aria-hidden="true"
@@ -934,7 +1065,7 @@ export function VoiceSession({
             ) : (
               <button
                 type="button"
-                onClick={handleStart}
+                onClick={() => handleStart()}
                 disabled={reportLoading}
                 aria-label={hasHistory ? "继续对话" : "开始对话"}
                 className="group relative flex h-[4.5rem] w-[4.5rem] items-center justify-center rounded-full bg-ink-on-canvas text-bg-canvas shadow-elevated transition-transform duration-200 ease-[cubic-bezier(0.4,0,0.2,1)] hover:scale-[1.04] active:scale-[0.94] disabled:cursor-not-allowed disabled:opacity-60"
@@ -945,7 +1076,11 @@ export function VoiceSession({
             )}
 
             <p className="text-center text-[12.5px] text-ink-on-canvas-faint">
-              {isActive
+              {showOpeningPrep
+                ? status === "active"
+                  ? "语音已准备好，但还不会收你的声音"
+                  : "正在连接时也可以先想第一句"
+                : isActive
                 ? typingTestMode
                   ? "打字测试 · 底部输入发送"
                   : activeAsrProvider === "platform-native-asr"
@@ -981,7 +1116,8 @@ export function VoiceSession({
               </Button>
             ) : null}
           </div>
-      </div>
+        </div>
+      ) : null}
     </section>
   );
 }

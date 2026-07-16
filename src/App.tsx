@@ -256,9 +256,23 @@ function App() {
   );
 
   const handleFreeTalk = useCallback(() => {
+    openingDirections.prefetch(
+      {
+        topicId: "free-talk",
+        title: "自由畅聊",
+        description: "没有固定场景，从用户真实生活、工作或最近感兴趣的事聊起",
+        promptSeed: "Open with anything the learner genuinely wants to talk about today.",
+      },
+      userMemory,
+      {
+        userId: usageActor.userId ?? undefined,
+        guestId: usageActor.guestId ?? undefined,
+        sessionId: sessionIdRef.current,
+      },
+    );
     setTopicId(null);
     setPracticeScreen("chat");
-  }, []);
+  }, [openingDirections, userMemory, usageActor.userId, usageActor.guestId]);
 
   const handleExitChat = useCallback(() => {
     reportRunRef.current += 1;
@@ -539,7 +553,7 @@ function App() {
             sessionLabel={sessionLabel}
             activeTopic={activeTopic}
             activeTask={activeTask}
-            aiDirections={openingDirections.directionsFor(topicId)}
+            aiDirections={openingDirections.directionsFor(topicId ?? "free-talk")}
             appSessionId={sessionIdRef.current}
             usageUserId={usageActor.userId}
             usageGuestId={usageActor.guestId}
