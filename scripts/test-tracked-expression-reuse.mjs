@@ -31,6 +31,7 @@ function summary(trackedExpressions) {
     topics: ["breakfast"],
     frequentMistakes: [],
     trackedExpressions,
+    personalFacts: [],
     coachNotes: "",
     updatedAt: "2026-07-13T12:00:00.000Z",
   };
@@ -182,10 +183,10 @@ function testStep1MemoryMergeKeepsReuseStateWhenSameTargetIsRemapped() {
     },
   );
 
-  assert.equal(processed.trackedExpressions.length, 1);
-  assert.equal(processed.trackedExpressions[0].targetText, "scrambled eggs");
-  assert.equal(processed.trackedExpressions[0].status, "reviewing");
-  assert.equal(processed.trackedExpressions[0].reuseCount, 1);
+  assert.equal(processed.summary.trackedExpressions.length, 1);
+  assert.equal(processed.summary.trackedExpressions[0].targetText, "scrambled eggs");
+  assert.equal(processed.summary.trackedExpressions[0].status, "reviewing");
+  assert.equal(processed.summary.trackedExpressions[0].reuseCount, 1);
 }
 
 testNormalizationAndUserOnlyExtraction();

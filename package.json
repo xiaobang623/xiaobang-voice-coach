@@ -13,7 +13,12 @@
     "test:selfhosted": "node scripts/test-selfhosted-pipeline.mjs",
     "start": "node proxy.js",
     "report-server": "node report-server.js",
-    "db:migrate": "node scripts/db-migrate.mjs"
+    "db:migrate": "node scripts/db-migrate.mjs",
+    "evals": "node evals/run.mjs",
+    "evals:smoke": "node evals/run.mjs --smoke",
+    "evals:report": "node evals/run.mjs --suite report",
+    "evals:memory": "node evals/run.mjs --suite memory",
+    "evals:directions": "node evals/run.mjs --suite directions"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.110.0",

@@ -1,0 +1,20 @@
+# Evals smoke gate：每次 push / PR 在 GitHub 云端跑确定性 evals。
+# 零依赖（只用 node 标准库 + 仓库自身模块），不需要 npm install，也不消耗任何 API key。
+# 与本地 pre-push 钩子互为兜底：本地钩子可被 SKIP_EVALS=1 绕过，这里绕不过。
+name: evals-smoke
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Run deterministic evals (smoke)
+        run: node evals/run.mjs --smoke
