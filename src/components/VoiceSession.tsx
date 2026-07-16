@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type {
+  ExpressionPracticeContext,
+  PracticeMode,
   ReportJSON,
   SessionSettings,
   TalkDirection,
@@ -354,6 +356,7 @@ function OpeningPrepSheet({
   readyPending,
   onReady,
   onRetry,
+  expressionPracticeContext,
 }: {
   activeTopic?: TopicOption | null;
   activeTask?: TaskScenario | null;
@@ -369,6 +372,7 @@ function OpeningPrepSheet({
   readyPending: boolean;
   onReady: () => void;
   onRetry: () => void;
+  expressionPracticeContext?: ExpressionPracticeContext | null;
 }) {
   const staticPool =
     (activeTask?.directions?.length ? activeTask.directions : undefined) ??
@@ -388,12 +392,20 @@ function OpeningPrepSheet({
     setShown(pickDirections(aiDirections, OPENING_GUIDE_DIRECTION_COUNT));
   }, [aiDirections]);
 
-  const title = activeTask ? `先用一句英文进入场景` : "先准备一句，再开口";
-  const subtitle = activeTask
-    ? `「${activeTask.title}」不用演完整，先开个头就行。`
-    : activeTopic
-      ? `聊「${activeTopic.title}」，选一个方向先说一句。`
-      : "选一个方向，先说一句真实想说的英文。";
+  const targetExpressions = expressionPracticeContext?.targetExpressions.slice(0, 3) ?? [];
+  const isExpressionPractice = targetExpressions.length > 0;
+  const title = isExpressionPractice
+    ? "试着用上这些表达"
+    : activeTask
+      ? `先用一句英文进入场景`
+      : "先准备一句，再开口";
+  const subtitle = isExpressionPractice
+    ? "不用刻意背，聊到合适的时候用出来就行。"
+    : activeTask
+      ? `「${activeTask.title}」不用演完整，先开个头就行。`
+      : activeTopic
+        ? `聊「${activeTopic.title}」，选一个方向先说一句。`
+        : "选一个方向，先说一句真实想说的英文。";
   const statusCopy = errorMessage
     ? { label: "连接没成功", body: "检查麦克风或重试连接", tone: "text-error bg-error-bg border-error/30" }
     : status === "active"
@@ -407,7 +419,11 @@ function OpeningPrepSheet({
   const primaryDisabled = !errorMessage && (readyPending || status === "connecting");
 
   return (
-    <li className="animate-fade-up flex h-full min-h-[28rem] items-center py-2">
+    <li
+      className={`animate-fade-up flex h-full py-2 ${
+        isExpressionPractice ? "min-h-0 items-start" : "min-h-[28rem] items-center"
+      }`}
+    >
       <div className="w-full rounded-[24px] border border-[rgba(244,243,240,0.14)] bg-surface-canvas-raised px-4 py-4 text-ink-on-canvas shadow-elevated md:px-5 md:py-5">
         <div className="flex items-start gap-3">
           <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-surface-canvas-chip ring-1 ring-[rgba(244,243,240,0.12)]">
@@ -431,36 +447,63 @@ function OpeningPrepSheet({
           </div>
         </div>
 
-        <div className="mt-4 flex items-center justify-between gap-3">
-          <p className="text-[13px] font-semibold text-ink-on-canvas-soft">选一个方向，借一句开头</p>
-          <button
-            type="button"
-            onClick={() =>
-              setShown((current) => pickDirections(pool, OPENING_GUIDE_DIRECTION_COUNT, current))
-            }
-            className="shrink-0 rounded-full border border-[rgba(244,243,240,0.14)] bg-surface-canvas-chip px-3 py-1.5 text-[12px] font-medium text-ink-on-canvas-soft transition hover:bg-white/10 hover:text-ink-on-canvas active:scale-[0.97]"
-          >
-            🎲 换一批
-          </button>
-        </div>
-
-        <div className="mt-2.5 space-y-2">
-          {shown.map((direction) => (
-            <div
-              key={direction.zh}
-              className="w-full rounded-2xl border border-[rgba(244,243,240,0.14)] bg-bg-canvas px-3.5 py-3 text-left"
-            >
-              <span className="block text-[15px] font-semibold leading-snug text-ink-on-canvas">
-                {direction.zh}
-              </span>
-              {direction.en ? (
-                <span className="mt-1 block text-[13px] italic leading-snug text-ink-on-canvas-soft">
-                  {direction.en}
+        {isExpressionPractice ? (
+          <div className="mt-4 max-h-[10rem] space-y-2.5 overflow-y-auto pr-1">
+            {targetExpressions.map((expression, index) => (
+              <div
+                key={`${expression.text}-${index}`}
+                className="w-full rounded-2xl border border-[rgba(244,243,240,0.14)] bg-bg-canvas px-3.5 py-2.5 text-left"
+              >
+                <span className="block text-[14.5px] font-semibold leading-snug text-ink-on-canvas">
+                  {expression.text}
                 </span>
-              ) : null}
+                {expression.meaning ? (
+                  <span className="mt-1 block text-[13px] leading-snug text-ink-on-canvas-soft">
+                    {expression.meaning}
+                  </span>
+                ) : null}
+                {expression.example ? (
+                  <span className="mt-1.5 block text-[12.5px] italic leading-snug text-ink-on-canvas-faint">
+                    例：{expression.example}
+                  </span>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <>
+            <div className="mt-4 flex items-center justify-between gap-3">
+              <p className="text-[13px] font-semibold text-ink-on-canvas-soft">选一个方向，借一句开头</p>
+              <button
+                type="button"
+                onClick={() =>
+                  setShown((current) => pickDirections(pool, OPENING_GUIDE_DIRECTION_COUNT, current))
+                }
+                className="shrink-0 rounded-full border border-[rgba(244,243,240,0.14)] bg-surface-canvas-chip px-3 py-1.5 text-[12px] font-medium text-ink-on-canvas-soft transition hover:bg-white/10 hover:text-ink-on-canvas active:scale-[0.97]"
+              >
+                🎲 换一批
+              </button>
             </div>
-          ))}
-        </div>
+
+            <div className="mt-2.5 space-y-2">
+              {shown.map((direction) => (
+                <div
+                  key={direction.zh}
+                  className="w-full rounded-2xl border border-[rgba(244,243,240,0.14)] bg-bg-canvas px-3.5 py-3 text-left"
+                >
+                  <span className="block text-[15px] font-semibold leading-snug text-ink-on-canvas">
+                    {direction.zh}
+                  </span>
+                  {direction.en ? (
+                    <span className="mt-1 block text-[13px] italic leading-snug text-ink-on-canvas-soft">
+                      {direction.en}
+                    </span>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          </>
+        )}
 
         <div className="mt-4 grid grid-cols-[1fr_auto] items-center gap-3">
           <p className="text-[12px] leading-relaxed text-ink-on-canvas-faint">
@@ -480,6 +523,30 @@ function OpeningPrepSheet({
   );
 }
 
+
+function TargetExpressionChips({ context }: { context?: ExpressionPracticeContext | null }) {
+  const expressions = context?.targetExpressions.slice(0, 3) ?? [];
+  if (expressions.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="relative z-20 shrink-0 px-1 pt-1 md:px-4">
+      <div className="flex flex-wrap gap-1.5 rounded-2xl border border-white/10 bg-surface-canvas-raised/70 px-2.5 py-2 backdrop-blur-md">
+        {expressions.map((expression, index) => (
+          <span
+            key={`${expression.text}-${index}`}
+            className="max-w-full truncate rounded-full border border-accent-teal/25 bg-accent-teal/12 px-2.5 py-1 text-[11.5px] font-medium text-accent-teal-on-canvas"
+            title={expression.meaning ? `${expression.text} · ${expression.meaning}` : expression.text}
+          >
+            {expression.text}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function CoachAvatar({ status }: { status: "connecting" | "active" | "ended" }) {
   const expression: MascotExpression =
     status === "connecting" ? "thinking" : status === "active" ? "talking" : "idle";
@@ -495,6 +562,8 @@ export interface VoiceSessionProps {
   voice: UseVoiceSessionResult;
   settings: SessionSettings;
   sessionLabel: string;
+  practiceMode?: PracticeMode;
+  expressionPracticeContext?: ExpressionPracticeContext | null;
   activeTopic?: TopicOption | null;
   activeTask?: TaskScenario | null;
   /** Prefetched AI opening directions for the active topic/task, if ready. */
@@ -523,6 +592,8 @@ export function VoiceSession({
   voice,
   settings,
   sessionLabel: _sessionLabel,
+  practiceMode = "normal",
+  expressionPracticeContext,
   activeTopic,
   activeTask,
   aiDirections,
@@ -568,12 +639,22 @@ export function VoiceSession({
   const [openingPrepared, setOpeningPrepared] = useState(false);
   const [readyRequested, setReadyRequested] = useState(false);
 
-  const openingFlowKey = activeTask?.id ?? activeTopic?.id ?? "free-talk";
-  const analyticsTopic = activeTask?.id ?? activeTopic?.id ?? "free-talk";
+  const openingFlowKey =
+    practiceMode === "expression_practice" && expressionPracticeContext?.targetExpressions.length
+      ? `expression-practice:${expressionPracticeContext.sourceReportId ?? expressionPracticeContext.targetExpressions.map((item) => item.text).join("|")}`
+      : activeTask?.id ?? activeTopic?.id ?? "free-talk";
+  const analyticsTopic =
+    practiceMode === "expression_practice"
+      ? "expression_practice"
+      : activeTask?.id ?? activeTopic?.id ?? "free-talk";
 
+  // 开口漏斗埋点：准备页展示时间 / 点「我准备好了」时间，用于 waitedMs 和 msFromReady。
   const prepShownAtRef = useRef(Date.now());
   const readyAtRef = useRef<number | null>(null);
+  const openingFlowKeyRef = useRef(openingFlowKey);
+  openingFlowKeyRef.current = openingFlowKey;
 
+  // 开口漏斗埋点：进入对话页（每个 appSessionId 记一次）。
   useEffect(() => {
     prepShownAtRef.current = Date.now();
     readyAtRef.current = null;
@@ -612,19 +693,24 @@ export function VoiceSession({
   const hasHistory = messages.length > 0;
   const userHasSpoken = messages.some((message) => message.role === "user" && message.text.trim().length > 0);
   const userHasFinalUtterance = messages.some(
-    (message) => message.role === "user" && message.isFinal && message.text.trim().length > 0,
+    (message) =>
+      message.role === "user" && message.isFinal && message.text.trim().length > 0,
   );
   const canGenerateReport = userHasSpoken && !report && !reportLoading;
 
+  // 开口漏斗埋点：用户说出第一句（每个会话记一次）。
   useEffect(() => {
-    if (!userHasFinalUtterance) return;
+    if (!userHasFinalUtterance) {
+      return;
+    }
     trackEventOnce(`first_utterance:${appSessionId}`, "first_utterance", {
       userId: analyticsUserId,
       guestId: analyticsGuestId,
       sessionId: appSessionId,
-      props: readyAtRef.current !== null
-        ? { msFromReady: Math.max(0, Date.now() - readyAtRef.current) }
-        : {},
+      props:
+        readyAtRef.current !== null
+          ? { msFromReady: Math.max(0, Date.now() - readyAtRef.current) }
+          : {},
     });
   }, [analyticsGuestId, analyticsUserId, userHasFinalUtterance, appSessionId]);
 
@@ -650,7 +736,10 @@ export function VoiceSession({
   ]);
 
   const handleOpeningReady = useCallback(() => {
-    if (readyAtRef.current === null) readyAtRef.current = Date.now();
+    // 开口漏斗埋点：点「我准备好了」（每个会话记一次，重试点击不重复计）。
+    if (readyAtRef.current === null) {
+      readyAtRef.current = Date.now();
+    }
     trackEventOnce(`ready_click:${appSessionId}`, "ready_click", {
       userId: analyticsUserId,
       guestId: analyticsGuestId,
@@ -676,7 +765,16 @@ export function VoiceSession({
     if (status === "ended") {
       handleStart(true);
     }
-  }, [analyticsGuestId, analyticsTopic, analyticsUserId, appSessionId, enableInput, errorMessage, handleStart, status]);
+  }, [
+    analyticsGuestId,
+    analyticsTopic,
+    analyticsUserId,
+    appSessionId,
+    enableInput,
+    errorMessage,
+    handleStart,
+    status,
+  ]);
 
   const handleOpeningRetry = useCallback(() => {
     setReadyRequested(false);
@@ -717,7 +815,7 @@ export function VoiceSession({
 
   useEffect(() => {
     const list = listRef.current;
-    if (!list || !stickToBottomRef.current) {
+    if (!list || !stickToBottomRef.current || messages.length === 0) {
       return;
     }
     list.scrollTo({ top: list.scrollHeight, behavior: "smooth" });
@@ -867,6 +965,10 @@ export function VoiceSession({
         </div>
       </div>
 
+      {practiceMode === "expression_practice" && !showOpeningPrep ? (
+        <TargetExpressionChips context={expressionPracticeContext} />
+      ) : null}
+
       {controlsOpen ? (
         <Card variant="elevated" className="relative z-40 mt-2 shrink-0 border-white/10 bg-surface-canvas-raised text-ink-on-canvas">
           <div className="flex flex-col divide-y divide-border-subtle sm:flex-row sm:items-stretch sm:divide-x sm:divide-y-0">
@@ -962,6 +1064,9 @@ export function VoiceSession({
               readyPending={readyRequested}
               onReady={handleOpeningReady}
               onRetry={handleOpeningRetry}
+              expressionPracticeContext={
+                practiceMode === "expression_practice" ? expressionPracticeContext : null
+              }
             />
           ) : null}
 
@@ -1081,7 +1186,7 @@ export function VoiceSession({
                   disabled={reportLoading}
                   className="!bg-rust !text-[#FBEEE8]"
                 >
-                  结束并复盘
+                  {practiceMode === "expression_practice" ? "结束并看小结" : "结束并复盘"}
                 </Button>
               ) : null}
             </div>
@@ -1091,7 +1196,9 @@ export function VoiceSession({
             {showOpeningPrep ? (
               <div className="rounded-2xl border border-white/10 bg-bg-canvas px-4 py-3 text-center">
                 <p className="text-[12.5px] leading-relaxed text-ink-on-canvas-soft">
-                  先在上方选个方向，点「我准备好了」后再开口。
+                  {practiceMode === "expression_practice"
+                    ? "看一眼目标表达，点「我准备好了」后再开口。"
+                    : "先在上方选个方向，点「我准备好了」后再开口。"}
                 </p>
               </div>
             ) : isActive ? (
@@ -1147,7 +1254,7 @@ export function VoiceSession({
                 disabled={reportLoading}
                 className="!border-[rgba(244,243,240,0.18)] !bg-[rgba(244,243,240,0.1)] !text-ink-on-canvas backdrop-blur-[16px] hover:!bg-[rgba(244,243,240,0.16)]"
               >
-                结束本次对话并生成复盘
+                {practiceMode === "expression_practice" ? "结束本次复练并看小结" : "结束本次对话并生成复盘"}
               </Button>
             ) : null}
 

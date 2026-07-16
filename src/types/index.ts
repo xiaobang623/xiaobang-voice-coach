@@ -1,4 +1,24 @@
-export type PracticeMode = "chat" | "task";
+export type TopicPracticeMode = "chat" | "task";
+
+export type PracticeMode = "normal" | "expression_practice";
+
+export interface ExpressionPracticeContext {
+  sourceReportId?: string;
+  targetExpressions: Array<{ text: string; meaning?: string; example?: string }>;
+}
+
+export interface ExpressionPracticeSummary {
+  sessionId: string;
+  createdAt: string;
+  targetExpressions: string[];
+  attemptedExpressions: Array<{
+    target: string;
+    userSentence?: string;
+    feedback: string;
+    betterVersion?: string;
+  }>;
+  nextSuggestion: { expression: string; reason: string };
+}
 
 /** A rough talking direction shown on the opening guide card. Gives the user a direction, not a full sentence. */
 export interface TalkDirection {
@@ -36,7 +56,7 @@ export interface TopicOption {
    */
   promptSeed?: string;
   /** Defaults to "chat" for backward compatibility. */
-  mode?: PracticeMode;
+  mode?: TopicPracticeMode;
 }
 
 export interface TaskGoal {

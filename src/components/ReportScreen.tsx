@@ -1,4 +1,4 @@
-import type { ReportJSON, TaskGoal } from "../types";
+import type { GrowthNewExpression, ReportJSON, TaskGoal } from "../types";
 import { ReportView } from "./ReportView";
 import { Button } from "./ui/Button";
 import { Mascot } from "./ui/Mascot";
@@ -14,6 +14,7 @@ export interface ReportScreenProps {
   savedToHistory: boolean;
   onBackToChat: () => void;
   onExit: () => void;
+  onRepracticeExpressions?: (expressions: GrowthNewExpression[]) => void;
 }
 
 /**
@@ -32,6 +33,7 @@ export function ReportScreen({
   savedToHistory,
   onBackToChat,
   onExit,
+  onRepracticeExpressions,
 }: ReportScreenProps) {
   // 报告已生成就直接展示，哪怕后台还在保存（loading 仍为 true）
   if (report) {
@@ -42,6 +44,7 @@ export function ReportScreen({
           wordCount={wordCount}
           sentenceCount={sentenceCount}
           taskGoals={taskGoals}
+          onRepracticeExpressions={onRepracticeExpressions}
         />
 
         <div className="mt-8 flex flex-col items-center gap-3">

@@ -1,5 +1,16 @@
-import type { ReportJSON } from "../types";
+import type { ExpressionPracticeContext, ExpressionPracticeSummary, ReportJSON } from "../types";
 import type { VoiceSessionMessage } from "../hooks/useVoiceSession";
+
+
+
+export interface GenerateExpressionPracticeSummaryInput {
+  sessionId: string;
+  targetExpressions: ExpressionPracticeContext["targetExpressions"];
+  transcript: string;
+  durationSeconds: number;
+  userId?: string;
+  guestId?: string;
+}
 
 export interface GenerateReportInput {
   sessionId: string;
@@ -97,5 +108,48 @@ export async function generateReport(input: GenerateReportInput): Promise<Report
       : {}),
     ...(Array.isArray(report.taskResults) ? { taskResults: report.taskResults } : {}),
     ...(report.taskScore ? { taskScore: report.taskScore } : {}),
+  };
+}
+
+
+export async function generateExpressionPracticeSummary(
+  input: GenerateExpressionPracticeSummaryInput,
+): Promise<ExpressionPracticeSummary> {
+  const response = await fetch("/api/generate-expression-practice-summary", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+    signal: AbortSignal.timeout(45_000),
+  });
+
+  if (!response.ok) {
+    const detail = await readResponseErrorDetail(response);
+    throw new Error(detail || `生成复练小结失败（${response.status}）`);
+  }
+
+  const summary = (await response.json()) as ExpressionPracticeSummary;
+  const targetTexts = input.targetExpressions.map((item) => item.text).filter(Boolean).slice(0, 3);
+  return {
+    sessionId: summary.sessionId || input.sessionId,
+    createdAt: summary.createdAt || new Date().toISOString(),
+    targetExpressions: Array.isArray(summary.targetExpressions) && summary.targetExpressions.length > 0
+      ? summary.targetExpressions
+      : targetTexts,
+    attemptedExpressions: Array.isArray(summary.attemptedExpressions)
+      ? summary.attemptedExpressions
+      : targetTexts.map((target) => ({
+          target,
+          feedback: input.transcript.trim()
+            ? `这次还没明显用到「${target}」。下次可以从一句更短的话开始。`
+            : `这次开口内容还不够多，暂时没法判断「${target}」的使用情况。`,
+        })),
+    nextSuggestion: summary.nextSuggestion?.expression
+      ? summary.nextSuggestion
+      : {
+          expression: targetTexts[0] ?? "",
+          reason: input.transcript.trim()
+            ? "下次优先挑一个表达接到自己的真实经历里。"
+            : "这次内容偏短，下次可以先用它说一句自己的真实经历。",
+        },
   };
 }

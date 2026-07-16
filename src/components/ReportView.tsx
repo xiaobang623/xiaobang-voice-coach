@@ -4,12 +4,14 @@ import type {
   CorrectionType,
   ReportGrowth,
   ReportJSON,
+  GrowthNewExpression,
   ReportReusedExpression,
   TaskGoal,
   TaskGoalStatus,
 } from "../types";
 import { getCefrLevel, getLevelInfo } from "../config/levels";
 import { Badge } from "./ui/Badge";
+import { Button } from "./ui/Button";
 import { Card } from "./ui/Card";
 import { LevelSystemCard } from "./LevelSystem";
 import {
@@ -28,6 +30,7 @@ export interface ReportViewProps {
   wordCount?: number;
   sentenceCount?: number;
   taskGoals?: TaskGoal[];
+  onRepracticeExpressions?: (expressions: GrowthNewExpression[]) => void;
 }
 
 function formatDuration(seconds: number): string {
@@ -236,7 +239,13 @@ function TodayFocusCard({ correction }: { correction: Correction }) {
   );
 }
 
-function GrowthSection({ growth }: { growth: ReportGrowth }) {
+function GrowthSection({
+  growth,
+  onRepracticeExpressions,
+}: {
+  growth: ReportGrowth;
+  onRepracticeExpressions?: (expressions: GrowthNewExpression[]) => void;
+}) {
   const hasAny =
     growth.sayBetter.length > 0 || growth.newExpressions.length > 0 || growth.talkMore.length > 0;
   if (!hasAny) {
@@ -293,6 +302,18 @@ function GrowthSection({ growth }: { growth: ReportGrowth }) {
               </li>
             ))}
           </ul>
+          {onRepracticeExpressions ? (
+            <div className="mt-4">
+              <Button
+                type="button"
+                size="md"
+                onClick={() => onRepracticeExpressions(growth.newExpressions.slice(0, 3))}
+                className="w-full"
+              >
+                复练这些表达
+              </Button>
+            </div>
+          ) : null}
         </div>
       ) : null}
 
@@ -352,7 +373,13 @@ function ReusedExpressionsSection({ items }: { items: ReportReusedExpression[] }
   );
 }
 
-export function ReportView({ report, wordCount, sentenceCount, taskGoals }: ReportViewProps) {
+export function ReportView({
+  report,
+  wordCount,
+  sentenceCount,
+  taskGoals,
+  onRepracticeExpressions,
+}: ReportViewProps) {
   if (!report) {
     return null;
   }
@@ -408,7 +435,12 @@ export function ReportView({ report, wordCount, sentenceCount, taskGoals }: Repo
         <ReusedExpressionsSection items={report.reusedExpressions} />
       ) : null}
 
-      {report.growth ? <GrowthSection growth={report.growth} /> : null}
+      {report.growth ? (
+        <GrowthSection
+          growth={report.growth}
+          onRepracticeExpressions={onRepracticeExpressions}
+        />
+      ) : null}
 
       {grouped.length > 0 ? (
         <div className="space-y-8">

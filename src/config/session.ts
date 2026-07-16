@@ -1,4 +1,12 @@
-import type { MemoryEntry, MemorySummary, SpeedOption, TaskScenario, UserMemory, VoiceOption } from "../types";
+import type {
+  ExpressionPracticeContext,
+  MemoryEntry,
+  MemorySummary,
+  SpeedOption,
+  TaskScenario,
+  UserMemory,
+  VoiceOption,
+} from "../types";
 
 /**
  * S2S-Omni (O2.0) official voices for volc.speech.dialog.
@@ -58,6 +66,43 @@ export function buildSystemPrompt(promptSeed?: string, memory?: MemoryInput): st
   }
 
   return `${BASE_SYSTEM_ROLE} ${memoryBlock} ${topicLine}`;
+}
+
+
+
+export function buildExpressionPracticeSystemPrompt(
+  context: ExpressionPracticeContext,
+  memory?: MemoryInput,
+): string {
+  const targets = context.targetExpressions
+    .slice(0, 3)
+    .map((item, index) => {
+      const details = [
+        item.meaning ? `meaning: ${item.meaning}` : "",
+        item.example ? `example: ${item.example}` : "",
+      ].filter(Boolean);
+      return `${index + 1}. "${item.text}"${details.length ? ` (${details.join("; ")})` : ""}`;
+    })
+    .join(" ");
+
+  const practiceBlock = [
+    "This is a short expression reuse practice, about two minutes.",
+    "Your hidden goal is to create natural chances for the learner to reuse these target expressions:",
+    targets,
+    "Keep chatting like a friend, not an examiner.",
+    "Never say 'please use expression #1', 'make a sentence', 'target expression', or anything classroom-like.",
+    "Use natural follow-up questions that make the expression useful in context.",
+    "Example: if the target is 'I ended up...', ask 'So what did you end up doing?'.",
+    "If the learner doesn't use an expression, keep the conversation natural and continue.",
+    "If they use one awkwardly, do not correct it during the chat; save feedback for the recap.",
+    "Do not mention scores, completion, pass/fail, or judging.",
+  ].join(" ");
+
+  const memoryBlock = formatMemoryBlock(memory);
+  if (!memoryBlock) {
+    return `${BASE_SYSTEM_ROLE} ${practiceBlock}`;
+  }
+  return `${BASE_SYSTEM_ROLE} ${memoryBlock} ${practiceBlock}`;
 }
 
 /**

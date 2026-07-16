@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppNavBar } from "./components/AppNavBar";
 import { BottomTabBar, type MainTab } from "./components/BottomTabBar";
+import { ExpressionPracticeSummaryScreen } from "./components/ExpressionPracticeSummaryScreen";
 import { MeView } from "./components/MeView";
 import { ReportScreen } from "./components/ReportScreen";
 import { TopicSelector, type PracticeInsight } from "./components/TopicSelector";
@@ -8,6 +9,7 @@ import { VoiceSession } from "./components/VoiceSession";
 import {
   buildTranscriptFromMessages,
   countUserSpeechStats,
+  generateExpressionPracticeSummary,
   generateReport,
 } from "./core/report";
 import { extractMemory } from "./core/memory";
@@ -16,7 +18,7 @@ import {
   preserveTrackedExpressionReuse,
 } from "./core/trackedExpressionReuse";
 import { resolveUsageActor, logApiUsage } from "./core/usageLog";
-import { setAnalyticsContext, trackEventOnce } from "./core/analytics";
+import { setAnalyticsContext, trackEvent, trackEventOnce } from "./core/analytics";
 import { useVoiceSession } from "./hooks/useVoiceSession";
 import { useVoiceProfile } from "./hooks/useVoiceProfile";
 import { useOpeningDirections } from "./hooks/useOpeningDirections";
@@ -40,20 +42,25 @@ import { CHAT_TOPICS } from "./config/chatTopics";
 import { findTaskScenario } from "./config/taskScenarios";
 import { scenarioLabel } from "./config/topics";
 import {
+  buildExpressionPracticeSystemPrompt,
   buildSystemPrompt,
   buildTaskSystemPrompt,
 } from "./config/session";
 import type {
+  ExpressionPracticeContext,
+  ExpressionPracticeSummary,
+  GrowthNewExpression,
   GrowthPageData,
   MemorySummary,
   ReportJSON,
+  PracticeMode,
   ReportReusedExpression,
   SessionSettings,
   TaskScenario,
   UserMemory,
 } from "./types";
 
-type PracticeScreen = "topics" | "chat" | "report";
+type PracticeScreen = "topics" | "chat" | "report" | "expressionSummary";
 
 function App() {
   const { isConfigured, isAnonymous, isLoading: authLoading, userId } = useAuth();
@@ -66,6 +73,12 @@ function App() {
   const [report, setReport] = useState<ReportJSON | null>(null);
   const [reportLoading, setReportLoading] = useState(false);
   const [reportError, setReportError] = useState<string | null>(null);
+  const [practiceMode, setPracticeMode] = useState<PracticeMode>("normal");
+  const [expressionPracticeContext, setExpressionPracticeContext] =
+    useState<ExpressionPracticeContext | null>(null);
+  const [expressionSummary, setExpressionSummary] = useState<ExpressionPracticeSummary | null>(null);
+  const [expressionSummaryLoading, setExpressionSummaryLoading] = useState(false);
+  const [expressionSummaryError, setExpressionSummaryError] = useState<string | null>(null);
   const [userMemory, setUserMemory] = useState<UserMemory | null>(null);
   const [homeGrowthData, setHomeGrowthData] = useState<GrowthPageData | null>(null);
   const [homeInsightLoading, setHomeInsightLoading] = useState(false);
@@ -81,6 +94,8 @@ function App() {
 
   const inChat = practiceScreen === "chat";
   const inReport = practiceScreen === "report";
+  const inExpressionSummary = practiceScreen === "expressionSummary";
+  const inImmersiveFlow = inChat || inReport || inExpressionSummary;
 
   useEffect(() => {
     if (mainTab !== "me" && accountReturnTab) {
@@ -153,6 +168,14 @@ function App() {
   );
 
   const sessionSettings = useMemo<SessionSettings>(() => {
+    if (practiceMode === "expression_practice" && expressionPracticeContext) {
+      return {
+        voiceType: resolvedVoiceType,
+        speedRatio: preferences.speedRatio,
+        systemPrompt: buildExpressionPracticeSystemPrompt(expressionPracticeContext, userMemory),
+      };
+    }
+
     const taskScenario = topicId ? findTaskScenario(topicId) : undefined;
     if (taskScenario) {
       return {
@@ -167,7 +190,14 @@ function App() {
       speedRatio: preferences.speedRatio,
       systemPrompt: buildSystemPrompt(topic?.promptSeed, userMemory),
     };
-  }, [resolvedVoiceType, preferences.speedRatio, topicId, userMemory]);
+  }, [
+    resolvedVoiceType,
+    preferences.speedRatio,
+    practiceMode,
+    expressionPracticeContext,
+    topicId,
+    userMemory,
+  ]);
 
   const usageActor = useMemo(
     () => resolveUsageActor({ userId, isAnonymous }),
@@ -299,6 +329,10 @@ function App() {
         sessionId: sessionIdRef.current,
       });
 
+      setPracticeMode("normal");
+      setExpressionPracticeContext(null);
+      setExpressionSummary(null);
+      setExpressionSummaryError(null);
       setTopicId(selectedTopicId);
       setPracticeScreen("chat");
     },
@@ -320,6 +354,10 @@ function App() {
         sessionId: sessionIdRef.current,
       },
     );
+    setPracticeMode("normal");
+    setExpressionPracticeContext(null);
+    setExpressionSummary(null);
+    setExpressionSummaryError(null);
     setTopicId(null);
     setPracticeScreen("chat");
   }, [openingDirections, userMemory, usageActor.userId, usageActor.guestId]);
@@ -328,20 +366,160 @@ function App() {
     reportRunRef.current += 1;
     void logVoiceUsage();
     voice.clearConversation();
+    setReportError(null);
+    setReportLoading(false);
+    setExpressionSummary(null);
+    setExpressionSummaryError(null);
+    setExpressionSummaryLoading(false);
+    sessionIdRef.current = crypto.randomUUID();
+    setAnalyticsContext({ sessionId: sessionIdRef.current });
+    doubaoLoggedSessionRef.current = null;
+    openingDirections.reset();
+
+    if (practiceMode === "expression_practice") {
+      setPracticeMode("normal");
+      setExpressionPracticeContext(null);
+      setPracticeScreen(report ? "report" : "topics");
+      return;
+    }
+
+    setReport(null);
+    setPracticeScreen("topics");
+  }, [voice, logVoiceUsage, openingDirections, practiceMode, report]);
+
+  const handleExitAllPractice = useCallback(() => {
+    reportRunRef.current += 1;
+    void logVoiceUsage();
+    voice.clearConversation();
     setReport(null);
     setReportError(null);
     setReportLoading(false);
+    setPracticeMode("normal");
+    setExpressionPracticeContext(null);
+    setExpressionSummary(null);
+    setExpressionSummaryError(null);
+    setExpressionSummaryLoading(false);
     sessionIdRef.current = crypto.randomUUID();
+    setAnalyticsContext({ sessionId: sessionIdRef.current });
     doubaoLoggedSessionRef.current = null;
     openingDirections.reset();
     setPracticeScreen("topics");
   }, [voice, logVoiceUsage, openingDirections]);
+
+  const handleBackToSourceReport = useCallback(() => {
+    reportRunRef.current += 1;
+    void logVoiceUsage();
+    voice.clearConversation();
+    setPracticeMode("normal");
+    setExpressionPracticeContext(null);
+    setExpressionSummary(null);
+    setExpressionSummaryError(null);
+    setExpressionSummaryLoading(false);
+    sessionIdRef.current = crypto.randomUUID();
+    setAnalyticsContext({ sessionId: sessionIdRef.current });
+    doubaoLoggedSessionRef.current = null;
+    openingDirections.reset();
+    setPracticeScreen(report ? "report" : "topics");
+  }, [voice, logVoiceUsage, openingDirections, report]);
+
+  const handleStartExpressionPractice = useCallback(
+    (expressions: GrowthNewExpression[]) => {
+      const targetExpressions: ExpressionPracticeContext["targetExpressions"] = expressions
+        .slice(0, 3)
+        .flatMap((item) => {
+          const text = item.phrase?.trim();
+          if (!text) {
+            return [];
+          }
+          const meaning = item.meaning?.trim();
+          const example = item.example?.trim();
+          return [
+            {
+              text,
+              ...(meaning ? { meaning } : {}),
+              ...(example ? { example } : {}),
+            },
+          ];
+        });
+
+      if (targetExpressions.length === 0) {
+        return;
+      }
+
+      reportRunRef.current += 1;
+      voice.clearConversation();
+      openingDirections.reset();
+      const nextSessionId = crypto.randomUUID();
+      sessionIdRef.current = nextSessionId;
+      setAnalyticsContext({ sessionId: nextSessionId });
+      doubaoLoggedSessionRef.current = null;
+      const context: ExpressionPracticeContext = {
+        sourceReportId: report?.sessionId,
+        targetExpressions,
+      };
+      setPracticeMode("expression_practice");
+      setExpressionPracticeContext(context);
+      setExpressionSummary(null);
+      setExpressionSummaryError(null);
+      setExpressionSummaryLoading(false);
+      setReportError(null);
+      setReportLoading(false);
+      setTopicId(null);
+      setPracticeScreen("chat");
+
+      trackEvent("repractice_start", {
+        userId: analyticsActor.userId,
+        guestId: analyticsActor.guestId,
+        sessionId: nextSessionId,
+        props: {
+          expressionCount: targetExpressions.length,
+        },
+      });
+    },
+    [analyticsActor.guestId, analyticsActor.userId, openingDirections, report?.sessionId, voice],
+  );
 
   const handleEndAndReport = useCallback(async () => {
     const transcript = buildTranscriptFromMessages(voice.messages);
     const durationSeconds = getVoiceDurationSeconds();
     await logVoiceUsage();
     voice.stop();
+
+    if (practiceMode === "expression_practice") {
+      const sessionId = sessionIdRef.current;
+      const runId = ++reportRunRef.current;
+      const isCurrentRun = () => reportRunRef.current === runId;
+      setPracticeScreen("expressionSummary");
+      setExpressionSummaryLoading(true);
+      setExpressionSummaryError(null);
+      setExpressionSummary(null);
+
+      try {
+        if (!expressionPracticeContext?.targetExpressions.length) {
+          throw new Error("没有可复练的目标表达，请回到原报告重新进入。");
+        }
+        const summary = await generateExpressionPracticeSummary({
+          sessionId,
+          targetExpressions: expressionPracticeContext.targetExpressions,
+          transcript,
+          durationSeconds: durationSeconds || 1,
+          userId: usageActor.userId ?? undefined,
+          guestId: usageActor.guestId ?? undefined,
+        });
+        if (isCurrentRun()) {
+          setExpressionSummary(summary);
+        }
+      } catch (error) {
+        if (isCurrentRun()) {
+          setExpressionSummaryError(error instanceof Error ? error.message : String(error));
+        }
+      } finally {
+        if (isCurrentRun()) {
+          setExpressionSummaryLoading(false);
+        }
+      }
+      return;
+    }
 
     if (!transcript.trim()) {
       setReportError("这次还没聊到什么内容，多说几句再结束吧～");
@@ -480,9 +658,24 @@ function App() {
         setReportLoading(false);
       }
     }
-  }, [voice, topicId, isAnonymous, userMemory, usageActor, analyticsActor, userId, getVoiceDurationSeconds, logVoiceUsage]);
+  }, [
+    voice,
+    topicId,
+    isAnonymous,
+    userMemory,
+    usageActor,
+    analyticsActor,
+    userId,
+    getVoiceDurationSeconds,
+    logVoiceUsage,
+    practiceMode,
+    expressionPracticeContext,
+  ]);
 
-  const sessionLabel = useMemo(() => scenarioLabel(topicId), [topicId]);
+  const sessionLabel = useMemo(
+    () => (practiceMode === "expression_practice" ? "表达复练" : scenarioLabel(topicId)),
+    [practiceMode, topicId],
+  );
 
   const activeTopic = useMemo(
     () => (topicId ? (CHAT_TOPICS.find((t) => t.id === topicId) ?? null) : null),
@@ -495,11 +688,11 @@ function App() {
   );
 
   const handleMainTabChange = useCallback((tab: MainTab) => {
-    if (inChat || inReport) {
+    if (inImmersiveFlow) {
       return;
     }
     setMainTab(tab);
-  }, [inChat, inReport]);
+  }, [inImmersiveFlow]);
 
   const handleBackToChat = useCallback(() => {
     setPracticeScreen("chat");
@@ -541,7 +734,7 @@ function App() {
     <div className={`app-shell flex ${inChat ? "h-dvh overflow-hidden" : "min-h-dvh"} flex-col ${
       inChat ? "bg-bg-canvas text-ink-on-canvas" : "bg-bg text-text"
     }`}>
-      {!inChat && !inReport ? (
+      {!inImmersiveFlow ? (
         <AppNavBar
           active={mainTab}
           onChange={handleMainTabChange}
@@ -573,6 +766,30 @@ function App() {
               className="w-14 shrink-0 rounded-full px-2 py-1.5 text-sm text-text-secondary transition-colors hover:bg-bg-warm hover:text-text active:scale-95"
             >
               {report ? "完成" : "退出"}
+            </button>
+          </div>
+        </header>
+      ) : null}
+
+      {inExpressionSummary ? (
+        <header className="app-top-bar sticky top-0 z-30 border-b border-border-subtle bg-bg/90 backdrop-blur-xl">
+          <div className="page-shell page-shell--flow flex items-center gap-3 py-3">
+            <button
+              type="button"
+              onClick={handleBackToSourceReport}
+              className="flex shrink-0 items-center gap-0.5 rounded-full px-2 py-1.5 text-sm text-text-secondary transition-colors hover:bg-bg-warm hover:text-text active:scale-95"
+            >
+              ← 回报告
+            </button>
+            <p className="min-w-0 flex-1 truncate text-center text-sm font-medium text-text">
+              复练小结
+            </p>
+            <button
+              type="button"
+              onClick={handleExitAllPractice}
+              className="w-14 shrink-0 rounded-full px-2 py-1.5 text-sm text-text-secondary transition-colors hover:bg-bg-warm hover:text-text active:scale-95"
+            >
+              完成
             </button>
           </div>
         </header>
@@ -621,8 +838,10 @@ function App() {
             voice={voice}
             settings={sessionSettings}
             sessionLabel={sessionLabel}
-            activeTopic={activeTopic}
-            activeTask={activeTask}
+            practiceMode={practiceMode}
+            expressionPracticeContext={expressionPracticeContext}
+            activeTopic={practiceMode === "expression_practice" ? null : activeTopic}
+            activeTask={practiceMode === "expression_practice" ? null : activeTask}
             aiDirections={openingDirections.directionsFor(topicId ?? "free-talk")}
             appSessionId={sessionIdRef.current}
             usageUserId={usageActor.userId}
@@ -637,9 +856,9 @@ function App() {
             onSpeedChange={setSpeedRatio}
             showSubtitle={preferences.showSubtitle}
             onShowSubtitleChange={setShowSubtitle}
-            report={report}
-            reportLoading={reportLoading}
-            reportError={reportError}
+            report={practiceMode === "expression_practice" ? null : report}
+            reportLoading={practiceMode === "expression_practice" ? expressionSummaryLoading : reportLoading}
+            reportError={practiceMode === "expression_practice" ? null : reportError}
             onEndAndReport={() => void handleEndAndReport()}
             onViewReport={handleViewReport}
           />
@@ -656,6 +875,17 @@ function App() {
             savedToHistory={isConfigured && !isAnonymous}
             onBackToChat={handleBackToChat}
             onExit={handleExitChat}
+            onRepracticeExpressions={handleStartExpressionPractice}
+          />
+        ) : null}
+
+        {mainTab === "practice" && practiceScreen === "expressionSummary" ? (
+          <ExpressionPracticeSummaryScreen
+            summary={expressionSummary}
+            loading={expressionSummaryLoading}
+            error={expressionSummaryError}
+            onBackToReport={handleBackToSourceReport}
+            onExit={handleExitAllPractice}
           />
         ) : null}
 
@@ -670,7 +900,7 @@ function App() {
         ) : null}
       </main>
 
-      {!inChat && !inReport ? <BottomTabBar active={mainTab} onChange={handleMainTabChange} /> : null}
+      {!inImmersiveFlow ? <BottomTabBar active={mainTab} onChange={handleMainTabChange} /> : null}
     </div>
   );
 }

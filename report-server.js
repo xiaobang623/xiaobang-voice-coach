@@ -35,6 +35,11 @@ import {
   buildDirectionsUserPrompt,
   postProcessDirections,
 } from "./directions-post-process.js";
+import {
+  EXPRESSION_PRACTICE_SUMMARY_SYSTEM_PROMPT,
+  buildExpressionPracticeSummaryUserPrompt,
+  postProcessExpressionPracticeSummary,
+} from "./expression-practice-summary-post-process.js";
 
 const envLocal = parseEnvLocalFile();
 const apiKey = process.env.DEEPSEEK_API_KEY ?? envLocal.DEEPSEEK_API_KEY;
@@ -232,6 +237,72 @@ const server = createServer(async (req, res) => {
     } catch (error) {
       sendJson(res, 500, {
         error: error instanceof Error ? error.message : "Direction generation failed",
+      });
+    }
+    return;
+  }
+
+  if (req.url === "/generate-expression-practice-summary") {
+    if (!apiKey) {
+      sendJson(res, 500, { error: "DEEPSEEK_API_KEY is not configured in .env.local" });
+      return;
+    }
+
+    let body = "";
+    for await (const chunk of req) {
+      body += chunk;
+    }
+
+    let input;
+    try {
+      input = JSON.parse(body);
+    } catch {
+      sendJson(res, 400, { error: "Invalid JSON body" });
+      return;
+    }
+
+    if (!Array.isArray(input.targetExpressions) || input.targetExpressions.length === 0) {
+      sendJson(res, 400, { error: "targetExpressions is required" });
+      return;
+    }
+
+    try {
+      const deepseekResponse = await fetch("https://api.deepseek.com/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: "deepseek-chat",
+          temperature: 0.25,
+          max_tokens: 900,
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: EXPRESSION_PRACTICE_SUMMARY_SYSTEM_PROMPT },
+            { role: "user", content: buildExpressionPracticeSummaryUserPrompt(input) },
+          ],
+        }),
+      });
+
+      if (!deepseekResponse.ok) {
+        const detail = await deepseekResponse.text();
+        sendJson(res, 502, { error: "DeepSeek request failed", detail });
+        return;
+      }
+
+      const completion = await deepseekResponse.json();
+      const content = completion?.choices?.[0]?.message?.content;
+      if (!content || typeof content !== "string") {
+        sendJson(res, 502, { error: "Empty model response" });
+        return;
+      }
+
+      const raw = JSON.parse(content);
+      sendJson(res, 200, postProcessExpressionPracticeSummary(raw, input));
+    } catch (error) {
+      sendJson(res, 500, {
+        error: error instanceof Error ? error.message : "Expression practice summary failed",
       });
     }
     return;
