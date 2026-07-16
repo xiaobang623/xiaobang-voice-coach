@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BrowserPlatformNativeAsr } from "../adapters/asr/platformNative";
 import { DoubaoVoiceAdapter } from "../adapters/voice/doubao";
 import { SelfHostedVoiceAdapter } from "../adapters/voice/selfhosted";
@@ -48,6 +48,12 @@ export interface UseVoiceSessionResult {
   activeBackend: VoiceBackend | null;
   /** Resolved ASR provider for the active or last session. */
   activeAsrProvider: ActiveAsrProvider;
+  /** Approximate seconds the learner actually spoke English in this conversation. */
+  userSpeakingSeconds: number;
+  /** Number of final learner turns in this conversation. */
+  userTurns: number;
+  /** Read the freshest speaking stats at end-of-session time without waiting for a render. */
+  getSpeakingStats: () => { userSpeakingSeconds: number; userTurns: number };
   start: (options?: VoiceStartOptions) => Promise<void>;
   /** Prepare-mode: allow the user's microphone/ASR input to start flowing. */
   enableInput: () => void;
@@ -76,6 +82,15 @@ type ActiveAsrProvider = string | null;
 
 const PLATFORM_NATIVE_ASR_PROVIDER = "platform-native-asr";
 const PLATFORM_NATIVE_ASR_AUDIO_FALLBACK_PROVIDER = "siliconflow-sensevoice";
+
+function estimateSpeakingSecondsFromText(text: string): number {
+  const wordCount = text.trim() ? text.trim().split(/\s+/).filter(Boolean).length : 0;
+  if (wordCount === 0) {
+    return 0;
+  }
+  // Fallback口径：英文口语按约 2 words/sec 估算（词数 ÷ 2 ≈ 说话秒数）。
+  return Math.max(1, Math.round(wordCount / 2));
+}
 
 function normalizeSpeechText(value: string): string {
   return value.replace(/\s+/g, " ").trim().toLowerCase();
@@ -213,6 +228,7 @@ export function useVoiceSession(): UseVoiceSessionResult {
   const [conversationStartedAt, setConversationStartedAt] = useState<number | null>(null);
   const [activeBackend, setActiveBackend] = useState<VoiceBackend | null>(null);
   const [activeAsrProvider, setActiveAsrProvider] = useState<ActiveAsrProvider>(null);
+  const [userSpeakingAudioSeconds, setUserSpeakingAudioSeconds] = useState(0);
 
   const hintTimerRef = useRef<number | null>(null);
   const statusRef = useRef<VoiceSessionStatus>("ended");
@@ -244,6 +260,55 @@ export function useVoiceSession(): UseVoiceSessionResult {
   const openingMessageIdRef = useRef<string | null>(null);
   const openingTextRef = useRef<string | null>(null);
   const openingSuppressUntilRef = useRef<number>(0);
+  const speakingAudioSecondsRef = useRef<number>(0);
+  const publishedSpeakingAudioSecondsRef = useRef<number>(0);
+
+  const estimatedSpeakingSeconds = useMemo(() => {
+    const userText = messages
+      .filter((message) => message.role === "user" && message.isFinal && message.text.trim())
+      .map((message) => message.text)
+      .join(" ");
+    return estimateSpeakingSecondsFromText(userText);
+  }, [messages]);
+
+  const userTurns = useMemo(
+    () =>
+      messages.filter(
+        (message) => message.role === "user" && message.isFinal && message.text.trim().length > 0,
+      ).length,
+    [messages],
+  );
+
+  const userSpeakingSeconds =
+    userSpeakingAudioSeconds > 0 ? userSpeakingAudioSeconds : estimatedSpeakingSeconds;
+
+  const publishSpeakingAudioSeconds = useCallback(() => {
+    const nextSeconds = Math.round(speakingAudioSecondsRef.current);
+    if (nextSeconds === publishedSpeakingAudioSecondsRef.current) {
+      return;
+    }
+    publishedSpeakingAudioSecondsRef.current = nextSeconds;
+    setUserSpeakingAudioSeconds(nextSeconds);
+  }, []);
+
+  const resetSpeakingStats = useCallback(() => {
+    speakingAudioSecondsRef.current = 0;
+    publishedSpeakingAudioSecondsRef.current = 0;
+    setUserSpeakingAudioSeconds(0);
+  }, []);
+
+  const getSpeakingStats = useCallback(
+    () => {
+      const audioSeconds = Math.round(speakingAudioSecondsRef.current);
+      return {
+        // Primary口径：复用现有客户端 ASR/RMS 活跃语音帧累计秒数；不是精确 VAD。
+        // 当走平台原生 ASR 或打字测试等拿不到音频帧时，退回到用户最终消息词数 ÷ 2 估算。
+        userSpeakingSeconds: audioSeconds > 0 ? audioSeconds : estimatedSpeakingSeconds,
+        userTurns,
+      };
+    },
+    [estimatedSpeakingSeconds, userTurns],
+  );
 
   const clearListeningDraft = useCallback(() => {
     const draftId = listeningDraftIdRef.current;
@@ -368,9 +433,10 @@ export function useVoiceSession(): UseVoiceSessionResult {
     openingSuppressUntilRef.current = 0;
     teardownAll();
     setMessages([]);
+    resetSpeakingStats();
     setErrorMessage(null);
     setConversationStartedAt(null);
-  }, [teardownAll]);
+  }, [teardownAll, resetSpeakingStats]);
 
   const ensureTtsPlayer = useCallback(() => {
     if (!ttsContextRef.current) {
@@ -935,6 +1001,8 @@ export function useVoiceSession(): UseVoiceSessionResult {
           inSpeechRef.current = true;
           lastVoiceAtRef.current = now;
           endAsrSentForSilenceRef.current = false;
+          speakingAudioSecondsRef.current += input.length / audioEvent.inputBuffer.sampleRate;
+          publishSpeakingAudioSeconds();
 
           if (
             !listeningDraftIdRef.current &&
@@ -994,6 +1062,7 @@ export function useVoiceSession(): UseVoiceSessionResult {
     startPlatformNativeAsr,
     teardownConnection,
     clearListeningDraft,
+    publishSpeakingAudioSeconds,
   ]);
 
   const sendTextQuery = useCallback((text: string) => {
@@ -1034,6 +1103,9 @@ export function useVoiceSession(): UseVoiceSessionResult {
     conversationStartedAt,
     activeBackend,
     activeAsrProvider,
+    userSpeakingSeconds,
+    userTurns,
+    getSpeakingStats,
     start,
     enableInput,
     sendTextQuery,

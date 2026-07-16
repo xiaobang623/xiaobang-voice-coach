@@ -41,6 +41,13 @@ function formatDuration(seconds: number): string {
   return `${seconds} 秒`;
 }
 
+function formatSpeakingMinutes(seconds: number): string {
+  if (seconds <= 0) {
+    return "0 分钟";
+  }
+  return `${Math.max(1, Math.round(seconds / 60))} 分钟`;
+}
+
 function formatDate(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) {
@@ -338,6 +345,7 @@ export function GrowthPanel({ isGuest, onGoToAccount }: GrowthPanelProps) {
             stats: stats ?? {
               sessionCount: 0,
               totalDurationSeconds: 0,
+              weekSpeakingSeconds: 0,
               currentStreakDays: 0,
               longestStreakDays: 0,
               latestUserLevel: nextMemory.summary.userLevel,
@@ -454,9 +462,10 @@ export function GrowthPanel({ isGuest, onGoToAccount }: GrowthPanelProps) {
             note="基于最近练习估算"
           />
 
-          <div className="mt-3 grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+          <div className="mt-3 grid grid-cols-1 gap-2.5 sm:grid-cols-4">
             <StatTile label="练习次数" value={`${stats.sessionCount}`} />
             <StatTile label="总时长" value={formatDuration(stats.totalDurationSeconds)} />
+            <StatTile label="本周开口" value={formatSpeakingMinutes(stats.weekSpeakingSeconds ?? 0)} />
             <StatTile label="连续天数" value={`${stats.currentStreakDays}`} />
           </div>
 

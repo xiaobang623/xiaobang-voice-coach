@@ -65,6 +65,9 @@ export default async function handler(req, res) {
       transcript: typeof input.transcript === "string" ? input.transcript : "",
       durationSeconds:
         typeof input.durationSeconds === "number" ? input.durationSeconds : null,
+      userSpeakingSeconds:
+        typeof input.userSpeakingSeconds === "number" ? input.userSpeakingSeconds : null,
+      userTurns: typeof input.userTurns === "number" ? input.userTurns : null,
       report: input.report,
     });
 

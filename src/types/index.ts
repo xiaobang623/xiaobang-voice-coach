@@ -180,6 +180,12 @@ export interface ReportJSON {
   sessionId: string;
   createdAt: string;
   durationSeconds: number;
+  /** Approximate learner speaking time for this session; absent on older reports. */
+  userSpeakingSeconds?: number | null;
+  /** Final learner turns for this session; absent on older reports. */
+  userTurns?: number | null;
+  /** Previous comparable session speaking time, used for encouraging report copy when available. */
+  previousUserSpeakingSeconds?: number | null;
   userLevel: UserLevel;
   corrections: Correction[];
   /** 口语提升包：下次这样说 / 新表达 / 还能聊什么。Absent on old reports or very short sessions. */
@@ -253,6 +259,8 @@ export interface FrequentMistakeStat {
 export interface GrowthStats {
   sessionCount: number;
   totalDurationSeconds: number;
+  /** Learner speaking time since the local start of this week. */
+  weekSpeakingSeconds: number;
   currentStreakDays: number;
   longestStreakDays: number;
   latestUserLevel: UserLevel | null;
@@ -265,6 +273,8 @@ export interface ReportHistoryItem {
   createdAt: string;
   topic: string | null;
   durationSeconds: number;
+  userSpeakingSeconds?: number | null;
+  userTurns?: number | null;
   userLevel: UserLevel;
   correctionCount: number;
   /** Loaded on demand when the user expands a history row. */

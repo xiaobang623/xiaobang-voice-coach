@@ -25,6 +25,8 @@ export interface PersistSessionInput {
   /** Full "User: … / Coach: …" transcript. */
   transcript: string;
   durationSeconds: number;
+  userSpeakingSeconds?: number | null;
+  userTurns?: number | null;
   /** The generated report to store alongside the session. */
   report: ReportJSON;
 }
@@ -300,6 +302,8 @@ export async function persistSessionReport(input: PersistSessionInput): Promise<
       topic: input.topic,
       transcript: input.transcript,
       duration_seconds: input.durationSeconds,
+      user_speaking_seconds: input.userSpeakingSeconds ?? null,
+      user_turns: input.userTurns ?? null,
     },
     { onConflict: "id" },
   );
@@ -335,6 +339,8 @@ export async function persistGuestSessionReport(input: PersistGuestSessionInput)
         topic: input.topic,
         transcript: input.transcript,
         durationSeconds: input.durationSeconds,
+        userSpeakingSeconds: input.userSpeakingSeconds ?? null,
+        userTurns: input.userTurns ?? null,
         report: input.report,
       }),
     });
@@ -498,10 +504,14 @@ interface ReportHistoryRow {
     | {
         topic: string | null;
         duration_seconds: number | null;
+        user_speaking_seconds: number | null;
+        user_turns: number | null;
       }
     | {
         topic: string | null;
         duration_seconds: number | null;
+        user_speaking_seconds: number | null;
+        user_turns: number | null;
       }[]
     | null;
 }
@@ -525,6 +535,9 @@ function buildHistorySummaries(rows: ReportHistoryRow[]): ReportHistoryItem[] {
       createdAt: row.created_at || payload?.createdAt || new Date().toISOString(),
       topic: sessionMeta?.topic ?? null,
       durationSeconds: sessionMeta?.duration_seconds ?? payload?.durationSeconds ?? 0,
+      userSpeakingSeconds:
+        sessionMeta?.user_speaking_seconds ?? payload?.userSpeakingSeconds ?? null,
+      userTurns: sessionMeta?.user_turns ?? payload?.userTurns ?? null,
       userLevel: payload?.userLevel ?? "intermediate",
       correctionCount: payload?.corrections?.length ?? 0,
     });
@@ -534,12 +547,21 @@ function buildHistorySummaries(rows: ReportHistoryRow[]): ReportHistoryItem[] {
 }
 
 function buildGrowthStats(
-  sessions: Array<{ created_at: string; duration_seconds: number | null }>,
+  sessions: Array<{
+    created_at: string;
+    duration_seconds: number | null;
+    user_speaking_seconds?: number | null;
+  }>,
   reportRows: Array<{ payload: ReportJSON | null }>,
   memorySummary: MemorySummary | null,
 ): GrowthStats {
   const dayKeys = sessions.map((row) => toDayKey(row.created_at));
   const streaks = computeStreaks(dayKeys);
+  const now = new Date();
+  const weekStart = new Date(now);
+  weekStart.setHours(0, 0, 0, 0);
+  weekStart.setDate(weekStart.getDate() - ((weekStart.getDay() + 6) % 7));
+  const weekStartMs = weekStart.getTime();
 
   const allCorrections: Correction[] = [];
   for (const row of reportRows) {
@@ -554,6 +576,13 @@ function buildGrowthStats(
   return {
     sessionCount: sessions.length,
     totalDurationSeconds: sessions.reduce((sum, row) => sum + (row.duration_seconds ?? 0), 0),
+    weekSpeakingSeconds: sessions.reduce((sum, row) => {
+      const createdAtMs = new Date(row.created_at).getTime();
+      if (Number.isNaN(createdAtMs) || createdAtMs < weekStartMs) {
+        return sum;
+      }
+      return sum + (row.user_speaking_seconds ?? 0);
+    }, 0),
     currentStreakDays: streaks.current,
     longestStreakDays: streaks.longest,
     latestUserLevel: memorySummary?.userLevel ?? latestReport?.userLevel ?? null,
@@ -594,10 +623,15 @@ export async function loadGrowthPageData(): Promise<GrowthPageData | null> {
   }
 
   const [sessionsResult, reportsResult, memoryResult] = await Promise.all([
-    supabase.from("sessions").select("created_at, duration_seconds, topic").order("created_at", { ascending: true }),
+    supabase
+      .from("sessions")
+      .select("created_at, duration_seconds, user_speaking_seconds, topic")
+      .order("created_at", { ascending: true }),
     supabase
       .from("reports")
-      .select("created_at, session_id, payload, sessions(topic, duration_seconds)")
+      .select(
+        "created_at, session_id, payload, sessions(topic, duration_seconds, user_speaking_seconds, user_turns)",
+      )
       .order("created_at", { ascending: false })
       .limit(GROWTH_REPORT_LIMIT),
     supabase.from("memory").select("summary, entries").eq("user_id", userId).maybeSingle(),

@@ -4,7 +4,17 @@ import { getAdminSupabase } from "./admin-supabase.js";
  * Persist session + report using service role (guests cannot write via RLS).
  */
 export async function persistSessionReportAdmin(input) {
-  const { sessionId, userId, guestId, topic, transcript, durationSeconds, report } = input;
+  const {
+    sessionId,
+    userId,
+    guestId,
+    topic,
+    transcript,
+    durationSeconds,
+    userSpeakingSeconds,
+    userTurns,
+    report,
+  } = input;
 
   if (!sessionId) {
     throw new Error("sessionId is required");
@@ -26,6 +36,8 @@ export async function persistSessionReportAdmin(input) {
       topic: topic ?? null,
       transcript: transcript ?? "",
       duration_seconds: durationSeconds ?? null,
+      user_speaking_seconds: userSpeakingSeconds ?? null,
+      user_turns: userTurns ?? null,
     },
     { onConflict: "id" },
   );

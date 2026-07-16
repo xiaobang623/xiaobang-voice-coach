@@ -125,13 +125,45 @@ function TaskResultsSection({
   );
 }
 
-function StatCard({ label, value }: { label: string; value: string }) {
+function StatCard({
+  label,
+  value,
+  note,
+}: {
+  label: string;
+  value: string;
+  note?: string;
+}) {
   return (
     <Card variant="ghost" className="p-4 text-center">
       <p className="text-2xl font-semibold tabular-nums text-text">{value}</p>
       <p className="mt-1 text-xs text-text-muted">{label}</p>
+      {note ? <p className="mt-2 text-[11px] leading-relaxed text-text-secondary">{note}</p> : null}
     </Card>
   );
+}
+
+function buildSpeakingStatNote(report: ReportJSON): string {
+  const speakingSeconds = report.userSpeakingSeconds;
+  const turns = report.userTurns;
+  if (typeof speakingSeconds !== "number" || typeof turns !== "number") {
+    return "旧报告未记录开口量";
+  }
+
+  const base = `你说了 ${formatDuration(Math.max(0, speakingSeconds))} 英语 · ${Math.max(0, turns)} 轮对话`;
+  const previousSeconds = report.previousUserSpeakingSeconds;
+  if (typeof previousSeconds !== "number") {
+    return base;
+  }
+
+  const diff = Math.round(speakingSeconds - previousSeconds);
+  if (diff > 0) {
+    return `${base}，比上次多说了 ${formatDuration(diff)}`;
+  }
+  if (diff < 0) {
+    return `${base}，这次少 ${formatDuration(Math.abs(diff))} 也没关系，先保持开口`;
+  }
+  return `${base}，和上次一样稳定`;
 }
 
 function CorrectionCard({ correction }: { correction: Correction }) {
@@ -419,8 +451,17 @@ export function ReportView({
         note="本次练习估算"
       />
 
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <StatCard label="时长" value={formatDuration(report.durationSeconds)} />
+        <StatCard
+          label="本次开口"
+          value={
+            typeof report.userSpeakingSeconds === "number"
+              ? formatDuration(Math.max(0, report.userSpeakingSeconds))
+              : "—"
+          }
+          note={buildSpeakingStatNote(report)}
+        />
         <StatCard label="词数" value={wordCount != null ? String(wordCount) : "—"} />
         <StatCard label="句数" value={sentenceCount != null ? String(sentenceCount) : "—"} />
       </div>

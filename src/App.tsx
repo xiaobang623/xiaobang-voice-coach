@@ -482,6 +482,7 @@ function App() {
   const handleEndAndReport = useCallback(async () => {
     const transcript = buildTranscriptFromMessages(voice.messages);
     const durationSeconds = getVoiceDurationSeconds();
+    const speakingStats = voice.getSpeakingStats();
     await logVoiceUsage();
     voice.stop();
 
@@ -539,7 +540,7 @@ function App() {
       sessionId,
       props: {
         durationSeconds: durationSeconds || 1,
-        userTurns: speechStats.sentenceCount,
+        userTurns: speakingStats.userTurns,
       },
     });
 
@@ -558,7 +559,16 @@ function App() {
         taskGoals: taskScenario?.goals.map((g) => ({ id: g.id, desc: g.desc })),
       });
 
-      let reportForSession: ReportJSON = generatedReport;
+      const previousUserSpeakingSeconds =
+        homeGrowthData?.history.find((item) => item.userSpeakingSeconds != null)
+          ?.userSpeakingSeconds ?? null;
+
+      let reportForSession: ReportJSON = {
+        ...generatedReport,
+        userSpeakingSeconds: speakingStats.userSpeakingSeconds,
+        userTurns: speakingStats.userTurns,
+        previousUserSpeakingSeconds,
+      };
       let memoryForExtraction: MemorySummary | null = userMemory?.summary ?? null;
       let reuseUpdatedMemory: MemorySummary | null = null;
       const reusedExpressions: ReportReusedExpression[] = [];
@@ -571,7 +581,7 @@ function App() {
             memoryForExtraction = reuseResult.summary;
             reusedExpressions.push(...reuseResult.reusedExpressions);
             reportForSession = {
-              ...generatedReport,
+              ...reportForSession,
               reusedExpressions: reuseResult.reusedExpressions,
             };
           }
@@ -593,6 +603,8 @@ function App() {
           topic: topicId,
           transcript,
           durationSeconds,
+          userSpeakingSeconds: speakingStats.userSpeakingSeconds,
+          userTurns: speakingStats.userTurns,
           report: reportForSession,
         });
 
@@ -646,6 +658,8 @@ function App() {
           topic: topicId,
           transcript,
           durationSeconds,
+          userSpeakingSeconds: speakingStats.userSpeakingSeconds,
+          userTurns: speakingStats.userTurns,
           report: reportForSession,
         });
       }
@@ -666,6 +680,7 @@ function App() {
     usageActor,
     analyticsActor,
     userId,
+    homeGrowthData,
     getVoiceDurationSeconds,
     logVoiceUsage,
     practiceMode,
