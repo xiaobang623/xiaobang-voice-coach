@@ -18,6 +18,11 @@ import {
 } from "../../memory-post-process.js";
 import { postProcessDirections } from "../../directions-post-process.js";
 import { getModelCostRate, calculateCostForUsage } from "../../api/_lib/cost-rates.js";
+import {
+  evaluateGuestQuota,
+  buildDailyCostAlerts,
+  startOfTodayShanghai,
+} from "../../api/_lib/quota.js";
 import { makeCheck } from "../lib/harness.mjs";
 
 export const name = "smoke";
@@ -279,6 +284,97 @@ export async function run() {
     makeCheck(
       "SenseVoice ASR 默认免费",
       getModelCostRate("siliconflow", "siliconflow-sensevoice").per1KChars === 0,
+    ),
+  ]);
+
+  // -------------------------------------------------------------------------
+  // 6. C3 成本/滥用护栏（游客每日会话上限 + 日额度告警）
+  //    护栏原则：坏输入永远 fail-open，不因护栏逻辑挡住正常用户
+  // -------------------------------------------------------------------------
+  record("SMK-QUOTA-001-guest-limit-basic", [
+    makeCheck(
+      "未到上限放行（2/3）",
+      evaluateGuestQuota({ sessionsToday: 2, readyClicksToday: 1, limit: 3 }).allowed === true,
+    ),
+    makeCheck(
+      "到达上限拦截（3/3）",
+      evaluateGuestQuota({ sessionsToday: 3, readyClicksToday: 2, limit: 3 }).allowed === false,
+    ),
+    makeCheck(
+      "remaining 计算正确",
+      evaluateGuestQuota({ sessionsToday: 1, readyClicksToday: 0, limit: 3 }).remaining === 2,
+    ),
+  ]);
+  record("SMK-QUOTA-002-dual-signal-max", [
+    makeCheck(
+      "取 sessions 与 ready_click 的较大值（防中途放弃漏计）",
+      evaluateGuestQuota({ sessionsToday: 1, readyClicksToday: 3, limit: 3 }).allowed === false,
+    ),
+    makeCheck(
+      "used 取 max",
+      evaluateGuestQuota({ sessionsToday: 2, readyClicksToday: 3, limit: 5 }).used === 3,
+    ),
+  ]);
+  record("SMK-QUOTA-003-fail-open", [
+    makeCheck(
+      "坏计数不拦人（NaN → 0）",
+      evaluateGuestQuota({ sessionsToday: NaN, readyClicksToday: undefined, limit: 3 }).allowed === true,
+    ),
+    makeCheck(
+      "坏 limit 回退默认 3",
+      evaluateGuestQuota({ sessionsToday: 0, readyClicksToday: 0, limit: "abc" }).limit === 3,
+    ),
+    makeCheck(
+      "负数计数按 0 处理",
+      evaluateGuestQuota({ sessionsToday: -5, readyClicksToday: -1, limit: 3 }).used === 0,
+    ),
+  ]);
+  record("SMK-QUOTA-004-cost-alerts", [
+    makeCheck(
+      "按 actor 聚合并按成本降序",
+      (() => {
+        const alerts = buildDailyCostAlerts(
+          [
+            { user_id: "u1", guest_id: null, cost: 3 },
+            { user_id: "u1", guest_id: null, cost: 3 },
+            { user_id: null, guest_id: "g1", cost: 8 },
+            { user_id: "u2", guest_id: null, cost: 1 },
+          ],
+          5,
+        );
+        return (
+          alerts.length === 2 &&
+          alerts[0].actor_id === "g1" &&
+          alerts[0].actor_type === "guest" &&
+          alerts[1].actor_id === "u1" &&
+          alerts[1].cost === 6
+        );
+      })(),
+    ),
+    makeCheck(
+      "低于阈值不告警",
+      buildDailyCostAlerts([{ user_id: "u1", guest_id: null, cost: 4.99 }], 5).length === 0,
+    ),
+    makeCheck(
+      "无 actor / 坏 cost 行被跳过",
+      buildDailyCostAlerts(
+        [{ user_id: null, guest_id: null, cost: 99 }, { user_id: "u1", cost: "bad" }, null],
+        5,
+      ).length === 0,
+    ),
+    makeCheck(
+      "坏阈值回退默认 ¥5",
+      buildDailyCostAlerts([{ user_id: "u1", guest_id: null, cost: 5 }], "abc").length === 1,
+    ),
+  ]);
+  record("SMK-QUOTA-005-shanghai-day-start", [
+    makeCheck(
+      "UTC 边界：北京时间 7/17 01:00 → 当日起点是 UTC 7/16 16:00",
+      startOfTodayShanghai(new Date("2026-07-16T17:00:00.000Z")) === "2026-07-16T16:00:00.000Z",
+    ),
+    makeCheck(
+      "北京时间 7/16 23:30 仍算 7/16（起点 UTC 7/15 16:00）",
+      startOfTodayShanghai(new Date("2026-07-16T15:30:00.000Z")) === "2026-07-15T16:00:00.000Z",
     ),
   ]);
 

@@ -70,6 +70,42 @@ export function DashboardSummaryCards({ data, loading, error }: DashboardSummary
           sub={`今日 ${formatCurrency(data.cost_today)} · ${costTodayBreakdown}`}
         />
       </div>
+      <CostAlertStrip data={data} />
     </section>
+  );
+}
+
+/** C3 成本护栏：今日单人成本超阈值告警条。无告警时展示静默状态一行。 */
+function CostAlertStrip({ data }: { data: DashboardSummary }) {
+  const alerts = data.cost_alerts ?? [];
+  const threshold = data.cost_alert_threshold ?? 5;
+
+  if (alerts.length === 0) {
+    return (
+      <p className="mt-3 text-xs text-text-muted">
+        今日无额度告警（阈值 {formatCurrency(threshold)}/人/天）
+      </p>
+    );
+  }
+
+  return (
+    <div className="mt-4 rounded-2xl border border-error/30 bg-error/5 p-4">
+      <p className="text-sm font-medium text-error">
+        ⚠️ 今日额度告警 · {alerts.length} 人超过 {formatCurrency(threshold)}/天
+      </p>
+      <ul className="mt-2 space-y-1">
+        {alerts.map((alert) => (
+          <li
+            key={`${alert.actor_type}:${alert.actor_id}`}
+            className="flex items-center justify-between text-xs text-text-secondary"
+          >
+            <span className="truncate font-mono">
+              {alert.actor_type === "guest" ? "游客" : "用户"} {alert.actor_id.slice(0, 12)}…
+            </span>
+            <span className="shrink-0 font-semibold text-error">{formatCurrency(alert.cost)}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }

@@ -2,6 +2,10 @@ import { requireAdmin } from "../api/_lib/admin-auth.js";
 import { getAdminSupabase } from "../api/_lib/admin-supabase.js";
 import { buildCostByProvider } from "../api/_lib/cost-providers.js";
 import { setJsonCors, json } from "../api/_lib/http.js";
+import {
+  buildDailyCostAlerts,
+  resolveDailyCostAlertThreshold,
+} from "../api/_lib/quota.js";
 
 function todayBounds() {
   const start = new Date();
@@ -41,6 +45,7 @@ export default async function handler(req, res) {
       { data: allCosts },
       { data: todayCosts },
       { data: guestLogs },
+      { data: todayActorCosts },
     ] = await Promise.all([
       supabase.from("profiles").select("id", { count: "exact", head: true }),
       supabase.from("sessions").select("id", { count: "exact", head: true }),
@@ -61,6 +66,11 @@ export default async function handler(req, res) {
         .gte("created_at", start)
         .lte("created_at", end),
       supabase.from("token_logs").select("guest_id").not("guest_id", "is", null),
+      supabase
+        .from("token_logs")
+        .select("user_id, guest_id, cost")
+        .gte("created_at", start)
+        .lte("created_at", end),
     ]);
 
     const totalGuests = new Set((guestLogs ?? []).map((row) => row.guest_id).filter(Boolean)).size;
@@ -70,6 +80,10 @@ export default async function handler(req, res) {
 
     const costByProvider = buildCostByProvider(allCosts);
     const costTodayByProvider = buildCostByProvider(todayCosts);
+
+    // C3 成本护栏：今日单人成本超阈值的 actor（默认 ¥5，可用 DAILY_COST_ALERT_CNY 覆盖）
+    const alertThreshold = resolveDailyCostAlertThreshold(process.env.DAILY_COST_ALERT_CNY);
+    const costAlerts = buildDailyCostAlerts(todayActorCosts, alertThreshold);
 
     json(res, 200, {
       success: true,
@@ -83,6 +97,8 @@ export default async function handler(req, res) {
         sessions_today: sessionsToday ?? 0,
         cost_today: sumCost(todayCosts),
         cost_today_by_provider: costTodayByProvider,
+        cost_alerts: costAlerts,
+        cost_alert_threshold: alertThreshold,
       },
     });
   } catch (error) {

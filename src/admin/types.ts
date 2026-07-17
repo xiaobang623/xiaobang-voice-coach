@@ -13,6 +13,16 @@ export interface DashboardSummary {
   sessions_today: number;
   cost_today: number;
   cost_today_by_provider?: CostProviderRow[];
+  /** C3 成本护栏：今日单人成本超阈值的 actor 列表，按成本降序。 */
+  cost_alerts?: CostAlertRow[];
+  /** 告警阈值（¥/人/天），后端 DAILY_COST_ALERT_CNY 可配。 */
+  cost_alert_threshold?: number;
+}
+
+export interface CostAlertRow {
+  actor_type: "user" | "guest";
+  actor_id: string;
+  cost: number;
 }
 
 export interface CostProviderRow {

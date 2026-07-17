@@ -6,6 +6,7 @@ import { MeView } from "./components/MeView";
 import { ReportScreen } from "./components/ReportScreen";
 import { TopicSelector, type PracticeInsight } from "./components/TopicSelector";
 import { VoiceSession } from "./components/VoiceSession";
+import { Button } from "./components/ui/Button";
 import {
   buildTranscriptFromMessages,
   countUserSpeechStats,
@@ -18,6 +19,7 @@ import {
   preserveTrackedExpressionReuse,
 } from "./core/trackedExpressionReuse";
 import { resolveUsageActor, logApiUsage } from "./core/usageLog";
+import { fetchGuestQuota, type GuestQuotaStatus } from "./core/quota";
 import { setAnalyticsContext, trackEvent, trackEventOnce } from "./core/analytics";
 import { useVoiceSession } from "./hooks/useVoiceSession";
 import { useVoiceProfile } from "./hooks/useVoiceProfile";
@@ -214,6 +216,35 @@ function App() {
     [userId, usageActor.guestId],
   );
 
+  // C3 成本护栏：游客每日会话上限。回到话题页时刷新（会话结束后计数会变化）。
+  // fail-open：查询失败时 guestQuota 为 null，闸门放行。
+  const [guestQuota, setGuestQuota] = useState<GuestQuotaStatus | null>(null);
+  const [quotaBlockedOpen, setQuotaBlockedOpen] = useState(false);
+
+  useEffect(() => {
+    if (!usageActor.guestId || practiceScreen !== "topics") {
+      return;
+    }
+    let cancelled = false;
+    void fetchGuestQuota(usageActor.guestId, userId ?? null).then((quota) => {
+      if (!cancelled) {
+        setGuestQuota(quota);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [usageActor.guestId, userId, practiceScreen]);
+
+  /** 游客超出当日上限时拦截进入会话；放行返回 true。 */
+  const guardGuestQuota = useCallback((): boolean => {
+    if (usageActor.guestId && guestQuota && !guestQuota.allowed) {
+      setQuotaBlockedOpen(true);
+      return false;
+    }
+    return true;
+  }, [usageActor.guestId, guestQuota]);
+
   useEffect(() => {
     setAnalyticsContext({
       userId: analyticsActor.userId,
@@ -303,6 +334,9 @@ function App() {
 
   const handleSelectTopic = useCallback(
     (selectedTopicId: string) => {
+      if (!guardGuestQuota()) {
+        return;
+      }
       // Fire the AI direction prefetch right as the user picks the card, so it
       // has the whole "connecting" transition to resolve before the opening
       // guide card mounts. Task scenarios first (roleSetup doubles as the seed).
@@ -336,10 +370,13 @@ function App() {
       setTopicId(selectedTopicId);
       setPracticeScreen("chat");
     },
-    [openingDirections, userMemory, usageActor.userId, usageActor.guestId],
+    [guardGuestQuota, openingDirections, userMemory, usageActor.userId, usageActor.guestId],
   );
 
   const handleFreeTalk = useCallback(() => {
+    if (!guardGuestQuota()) {
+      return;
+    }
     openingDirections.prefetch(
       {
         topicId: "free-talk",
@@ -360,7 +397,7 @@ function App() {
     setExpressionSummaryError(null);
     setTopicId(null);
     setPracticeScreen("chat");
-  }, [openingDirections, userMemory, usageActor.userId, usageActor.guestId]);
+  }, [guardGuestQuota, openingDirections, userMemory, usageActor.userId, usageActor.guestId]);
 
   const handleExitChat = useCallback(() => {
     reportRunRef.current += 1;
@@ -424,6 +461,9 @@ function App() {
 
   const handleStartExpressionPractice = useCallback(
     (expressions: GrowthNewExpression[]) => {
+      if (!guardGuestQuota()) {
+        return;
+      }
       const targetExpressions: ExpressionPracticeContext["targetExpressions"] = expressions
         .slice(0, 3)
         .flatMap((item) => {
@@ -476,7 +516,7 @@ function App() {
         },
       });
     },
-    [analyticsActor.guestId, analyticsActor.userId, openingDirections, report?.sessionId, voice],
+    [analyticsActor.guestId, analyticsActor.userId, guardGuestQuota, openingDirections, report?.sessionId, voice],
   );
 
   const handleEndAndReport = useCallback(async () => {
@@ -916,6 +956,42 @@ function App() {
       </main>
 
       {!inImmersiveFlow ? <BottomTabBar active={mainTab} onChange={handleMainTabChange} /> : null}
+
+      {quotaBlockedOpen ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6"
+          role="dialog"
+          aria-modal="true"
+          aria-label="今日练习次数已用完"
+        >
+          <div className="w-full max-w-sm rounded-3xl bg-surface p-6 shadow-[var(--shadow-card)]">
+            <p className="text-lg font-semibold text-text">今天的免费练习用完啦</p>
+            <p className="mt-2 text-sm leading-relaxed text-text-secondary">
+              游客每天可以免费练 {guestQuota?.limit ?? 3} 次（今天已练{" "}
+              {guestQuota?.used ?? guestQuota?.limit ?? 3} 次）。注册后不限次数，
+              练习记录和小榜的记忆也会永久保存；明天零点后次数也会恢复。
+            </p>
+            <div className="mt-5 flex flex-col gap-2">
+              <Button
+                fullWidth
+                onClick={() => {
+                  setQuotaBlockedOpen(false);
+                  handleGoToAccount();
+                }}
+              >
+                免费注册，继续练
+              </Button>
+              <Button
+                fullWidth
+                variant="ghost"
+                onClick={() => setQuotaBlockedOpen(false)}
+              >
+                明天再来
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
