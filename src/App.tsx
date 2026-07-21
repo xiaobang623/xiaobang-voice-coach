@@ -1,11 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppNavBar } from "./components/AppNavBar";
 import { BottomTabBar, type MainTab } from "./components/BottomTabBar";
-import { ExpressionPracticeSummaryScreen } from "./components/ExpressionPracticeSummaryScreen";
-import { MeView } from "./components/MeView";
-import { ReportScreen } from "./components/ReportScreen";
 import { TopicSelector, type PracticeInsight } from "./components/TopicSelector";
-import { VoiceSession } from "./components/VoiceSession";
 import { Button } from "./components/ui/Button";
 import {
   buildTranscriptFromMessages,
@@ -63,6 +59,36 @@ import type {
 } from "./types";
 
 type PracticeScreen = "topics" | "chat" | "report" | "expressionSummary";
+
+const VoiceSession = lazy(() =>
+  import("./components/VoiceSession").then((module) => ({ default: module.VoiceSession })),
+);
+
+const ReportScreen = lazy(() =>
+  import("./components/ReportScreen").then((module) => ({ default: module.ReportScreen })),
+);
+
+const ExpressionPracticeSummaryScreen = lazy(() =>
+  import("./components/ExpressionPracticeSummaryScreen").then((module) => ({
+    default: module.ExpressionPracticeSummaryScreen,
+  })),
+);
+
+const MeView = lazy(() =>
+  import("./components/MeView").then((module) => ({ default: module.MeView })),
+);
+
+function PageLoadingFallback({ immersive = false }: { immersive?: boolean }) {
+  return (
+    <div
+      className={`flex min-h-[45vh] items-center justify-center px-6 text-sm text-text-muted ${
+        immersive ? "h-full flex-1" : ""
+      }`}
+    >
+      正在加载…
+    </div>
+  );
+}
 
 function App() {
   const { isConfigured, isAnonymous, isLoading: authLoading, userId } = useAuth();
@@ -888,71 +914,73 @@ function App() {
           />
         ) : null}
 
-        {mainTab === "practice" && practiceScreen === "chat" ? (
-          <VoiceSession
-            voice={voice}
-            settings={sessionSettings}
-            sessionLabel={sessionLabel}
-            practiceMode={practiceMode}
-            expressionPracticeContext={expressionPracticeContext}
-            activeTopic={practiceMode === "expression_practice" ? null : activeTopic}
-            activeTask={practiceMode === "expression_practice" ? null : activeTask}
-            aiDirections={openingDirections.directionsFor(topicId ?? "free-talk")}
-            appSessionId={sessionIdRef.current}
-            usageUserId={usageActor.userId}
-            usageGuestId={usageActor.guestId}
-            analyticsUserId={analyticsActor.userId}
-            analyticsGuestId={analyticsActor.guestId}
-            voiceType={resolvedVoiceType}
-            voiceOptions={voiceProfile.voices}
-            showVoicePicker={showsVoicePicker(voiceProfile)}
-            onVoiceChange={setVoiceType}
-            speedRatio={preferences.speedRatio}
-            onSpeedChange={setSpeedRatio}
-            showSubtitle={preferences.showSubtitle}
-            onShowSubtitleChange={setShowSubtitle}
-            report={practiceMode === "expression_practice" ? null : report}
-            reportLoading={practiceMode === "expression_practice" ? expressionSummaryLoading : reportLoading}
-            reportError={practiceMode === "expression_practice" ? null : reportError}
-            onEndAndReport={() => void handleEndAndReport()}
-            onViewReport={handleViewReport}
-          />
-        ) : null}
+        <Suspense fallback={<PageLoadingFallback immersive={inImmersiveFlow} />}>
+          {mainTab === "practice" && practiceScreen === "chat" ? (
+            <VoiceSession
+              voice={voice}
+              settings={sessionSettings}
+              sessionLabel={sessionLabel}
+              practiceMode={practiceMode}
+              expressionPracticeContext={expressionPracticeContext}
+              activeTopic={practiceMode === "expression_practice" ? null : activeTopic}
+              activeTask={practiceMode === "expression_practice" ? null : activeTask}
+              aiDirections={openingDirections.directionsFor(topicId ?? "free-talk")}
+              appSessionId={sessionIdRef.current}
+              usageUserId={usageActor.userId}
+              usageGuestId={usageActor.guestId}
+              analyticsUserId={analyticsActor.userId}
+              analyticsGuestId={analyticsActor.guestId}
+              voiceType={resolvedVoiceType}
+              voiceOptions={voiceProfile.voices}
+              showVoicePicker={showsVoicePicker(voiceProfile)}
+              onVoiceChange={setVoiceType}
+              speedRatio={preferences.speedRatio}
+              onSpeedChange={setSpeedRatio}
+              showSubtitle={preferences.showSubtitle}
+              onShowSubtitleChange={setShowSubtitle}
+              report={practiceMode === "expression_practice" ? null : report}
+              reportLoading={practiceMode === "expression_practice" ? expressionSummaryLoading : reportLoading}
+              reportError={practiceMode === "expression_practice" ? null : reportError}
+              onEndAndReport={() => void handleEndAndReport()}
+              onViewReport={handleViewReport}
+            />
+          ) : null}
 
-        {mainTab === "practice" && practiceScreen === "report" ? (
-          <ReportScreen
-            report={report}
-            loading={reportLoading}
-            error={reportError}
-            wordCount={speechStats.wordCount}
-            sentenceCount={speechStats.sentenceCount}
-            taskGoals={activeTask?.goals}
-            savedToHistory={isConfigured && !isAnonymous}
-            onBackToChat={handleBackToChat}
-            onExit={handleExitChat}
-            onRepracticeExpressions={handleStartExpressionPractice}
-          />
-        ) : null}
+          {mainTab === "practice" && practiceScreen === "report" ? (
+            <ReportScreen
+              report={report}
+              loading={reportLoading}
+              error={reportError}
+              wordCount={speechStats.wordCount}
+              sentenceCount={speechStats.sentenceCount}
+              taskGoals={activeTask?.goals}
+              savedToHistory={isConfigured && !isAnonymous}
+              onBackToChat={handleBackToChat}
+              onExit={handleExitChat}
+              onRepracticeExpressions={handleStartExpressionPractice}
+            />
+          ) : null}
 
-        {mainTab === "practice" && practiceScreen === "expressionSummary" ? (
-          <ExpressionPracticeSummaryScreen
-            summary={expressionSummary}
-            loading={expressionSummaryLoading}
-            error={expressionSummaryError}
-            onBackToReport={handleBackToSourceReport}
-            onExit={handleExitAllPractice}
-          />
-        ) : null}
+          {mainTab === "practice" && practiceScreen === "expressionSummary" ? (
+            <ExpressionPracticeSummaryScreen
+              summary={expressionSummary}
+              loading={expressionSummaryLoading}
+              error={expressionSummaryError}
+              onBackToReport={handleBackToSourceReport}
+              onExit={handleExitAllPractice}
+            />
+          ) : null}
 
-        {mainTab === "me" ? (
-          <MeView
-            accountDeepLink={accountDeepLink}
-            onAccountExit={accountReturnTab ? handleAccountExit : undefined}
-            onAccountDeepLinkConsumed={handleAccountDeepLinkConsumed}
-            recordDeepLink={recordDeepLink}
-            onRecordDeepLinkConsumed={handleRecordDeepLinkConsumed}
-          />
-        ) : null}
+          {mainTab === "me" ? (
+            <MeView
+              accountDeepLink={accountDeepLink}
+              onAccountExit={accountReturnTab ? handleAccountExit : undefined}
+              onAccountDeepLinkConsumed={handleAccountDeepLinkConsumed}
+              recordDeepLink={recordDeepLink}
+              onRecordDeepLinkConsumed={handleRecordDeepLinkConsumed}
+            />
+          ) : null}
+        </Suspense>
       </main>
 
       {!inImmersiveFlow ? <BottomTabBar active={mainTab} onChange={handleMainTabChange} /> : null}
