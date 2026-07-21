@@ -9,3 +9,6 @@ dist/
 CosyVoice/
 pretrained_models/
 logs/
+
+# Supabase local CLI state
+supabase/.temp/
