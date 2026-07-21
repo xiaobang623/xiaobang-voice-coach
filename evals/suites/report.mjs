@@ -183,9 +183,20 @@ const CASES = [
         checks.push(makeCheck("talkMore 带英文起手句", report.growth.talkMore.every((t) => /[a-z]/i.test(t.starter))));
         const generic = /\b(practice more|speak more|use better)\b/i.test(JSON.stringify(report.growth));
         checks.push(makeCheck("无 practice more 式空话", !generic));
+        // 「下次带走一句」焦点表达 + 悬念钩子（学习闭环留存）
+        const focus = report.growth.focusNextTime;
+        checks.push(makeCheck("有 growth 内容时锁定 focusNextTime", Boolean(focus?.phrase && focus?.hookLine), JSON.stringify(focus ?? null)));
+        if (focus?.phrase) {
+          const pool = [
+            ...report.growth.newExpressions.map((e) => normalize(e.phrase)),
+            ...report.growth.sayBetter.map((s) => normalize(s.upgraded)),
+          ];
+          const fromPool = pool.some((p) => p && (p.includes(normalize(focus.phrase)) || normalize(focus.phrase).includes(p)));
+          checks.push(makeCheck("focus.phrase 来自 growth 已产出的表达（不新编）", fromPool, `${focus.phrase} | pool: ${pool.join(" / ")}`));
+        }
       }
     },
-    judge: "Growth pack quality: sayBetter upgrades should be one notch above the user's level (i+1, not interview-level), newExpressions must be coffee-topic-relevant spoken chunks, talkMore starters must be sayable verbatim. No overlap with corrections.",
+    judge: "Growth pack quality: sayBetter upgrades should be one notch above the user's level (i+1, not interview-level), newExpressions must be coffee-topic-relevant spoken chunks, talkMore starters must be sayable verbatim. No overlap with corrections. focusNextTime must pick ONE genuinely high-leverage expression already listed in growth, and hookLine must sound like a warm friend gently challenging the user to reuse it next time — NOT a teacher assigning homework or announcing a learning flow.",
   },
   {
     id: "VC-L-002-level-beginner",

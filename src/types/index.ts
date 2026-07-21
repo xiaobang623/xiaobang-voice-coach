@@ -158,12 +158,28 @@ export interface GrowthTalkMore {
   starter: string;
 }
 
+/**
+ * The single expression worth carrying into the NEXT conversation, plus a
+ * friend-style "suspense hook" that turns the report's ending into next time's
+ * opening. Absent when the session produced no reusable growth expressions.
+ */
+export interface GrowthFocusNextTime {
+  /** THE one expression to reuse next time — copied verbatim from newExpressions/sayBetter. */
+  phrase: string;
+  /** Chinese, short: why this one is the highest-leverage carry-forward. */
+  why: string;
+  /** Chinese, friend tone: gently challenge the user to use it next time. */
+  hookLine: string;
+}
+
 /** 口语提升包 — helps the user say more / say it better, beyond error fixing. */
 export interface ReportGrowth {
   topic: string;
   sayBetter: GrowthSayBetter[];
   newExpressions: GrowthNewExpression[];
   talkMore: GrowthTalkMore[];
+  /** 「下次带走这一句」焦点表达 + 悬念钩子。只锁一个，制造下一次的复用动机。 */
+  focusNextTime?: GrowthFocusNextTime;
 }
 
 export interface ReportReusedExpression {

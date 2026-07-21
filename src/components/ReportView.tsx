@@ -279,7 +279,10 @@ function GrowthSection({
   onRepracticeExpressions?: (expressions: GrowthNewExpression[]) => void;
 }) {
   const hasAny =
-    growth.sayBetter.length > 0 || growth.newExpressions.length > 0 || growth.talkMore.length > 0;
+    growth.sayBetter.length > 0 ||
+    growth.newExpressions.length > 0 ||
+    growth.talkMore.length > 0 ||
+    Boolean(growth.focusNextTime);
   if (!hasAny) {
     return null;
   }
@@ -363,6 +366,26 @@ function GrowthSection({
               </li>
             ))}
           </ul>
+        </div>
+      ) : null}
+
+      {growth.focusNextTime ? (
+        <div>
+          <h3 className="text-[13px] font-semibold text-text-secondary">下次带走这一句</h3>
+          <p className="mt-0.5 text-xs text-text-muted">别贪多，先把这一个用出来就赢了</p>
+          <Card variant="default" className="mt-4 border border-accent-teal/40 bg-accent-teal/5 p-4">
+            <p className="text-[16px] font-semibold leading-snug text-accent-teal">
+              {growth.focusNextTime.phrase}
+            </p>
+            {growth.focusNextTime.why ? (
+              <p className="mt-1.5 text-[13px] leading-[1.6] text-text-secondary">
+                {growth.focusNextTime.why}
+              </p>
+            ) : null}
+            <p className="mt-3 text-[13.5px] leading-[1.6] text-text">
+              {growth.focusNextTime.hookLine}
+            </p>
+          </Card>
         </div>
       ) : null}
     </div>

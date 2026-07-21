@@ -195,6 +195,35 @@ export async function run() {
     makeCheck("全空 growth 整体省略", !("growth" in emptyGrowthReport)),
   ]);
 
+  const focusReport = postProcessReport(
+    {
+      growth: {
+        topic: "咖啡",
+        sayBetter: [],
+        newExpressions: [{ phrase: "grab a coffee", meaning: "喝杯咖啡", example: "Let's grab a coffee." }],
+        talkMore: [],
+        focusNextTime: {
+          phrase: "grab a coffee",
+          why: "日常最高频",
+          hookLine: "下次聊天试着把「grab a coffee」用出来，我会留意你有没有说到。",
+        },
+      },
+    },
+    baseInput,
+  );
+  record("SMK-REPORT-008-focus-next-time", [
+    makeCheck("focusNextTime 被保留", focusReport.growth?.focusNextTime?.phrase === "grab a coffee"),
+    makeCheck("focusNextTime 带 hookLine", Boolean(focusReport.growth?.focusNextTime?.hookLine)),
+  ]);
+
+  const focusDroppedReport = postProcessReport(
+    { growth: { sayBetter: [], newExpressions: [], talkMore: [], focusNextTime: { phrase: "x", why: "y", hookLine: "z" } } },
+    baseInput,
+  );
+  record("SMK-REPORT-009-focus-needs-content", [
+    makeCheck("无 growth 内容时 focusNextTime 一并省略", !("growth" in focusDroppedReport)),
+  ]);
+
   // -------------------------------------------------------------------------
   // 3. 记忆后处理 + 掌握度追踪（功能 10 / 10.1）
   // -------------------------------------------------------------------------

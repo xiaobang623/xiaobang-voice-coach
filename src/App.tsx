@@ -10,6 +10,7 @@ import {
   generateReport,
 } from "./core/report";
 import { extractMemory } from "./core/memory";
+import { pickFocusExpression } from "./core/focusExpression";
 import {
   applyTrackedExpressionReuse,
   preserveTrackedExpressionReuse,
@@ -213,10 +214,11 @@ function App() {
       };
     }
     const topic = CHAT_TOPICS.find((t) => t.id === topicId);
+    const focusExpression = pickFocusExpression(userMemory)?.targetText;
     return {
       voiceType: resolvedVoiceType,
       speedRatio: preferences.speedRatio,
-      systemPrompt: buildSystemPrompt(topic?.promptSeed, userMemory),
+      systemPrompt: buildSystemPrompt(topic?.promptSeed, userMemory, focusExpression),
     };
   }, [
     resolvedVoiceType,

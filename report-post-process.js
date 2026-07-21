@@ -121,7 +121,12 @@ export const SYSTEM_PROMPT = `You are an English speaking coach. Analyze the con
     "talkMore": [{
       "angle": "string (Chinese: 这个话题下次还可以聊的具体角度)",
       "starter": "string (a ready-to-use English opener the user can literally say next time)"
-    }]
+    }],
+    "focusNextTime": {
+      "phrase": "string (THE single most useful expression to carry into the NEXT conversation — copy it verbatim from one of newExpressions[].phrase or sayBetter[].upgraded above; never invent a new one)",
+      "why": "string (Chinese, <=20 chars: 为什么这一个最值得下次主动用出来)",
+      "hookLine": "string (Chinese, warm friend tone: name the expression and gently challenge them to use it next time)"
+    }
   },
   "taskResults": [{
     "goalId": "string",
@@ -157,6 +162,8 @@ Growth pack (the "growth" field — ALWAYS include it when the transcript has en
 - newExpressions (3-5 items): teach spoken chunks, collocations, or sentence patterns directly useful for THIS topic and appropriate for the user's level. They must be expressions the user did NOT already say in this conversation — never present the user's own words back as something new. Prefer high-frequency spoken English over fancy written words. Each needs one natural example sentence in the context of this conversation.
 - talkMore (2-3 items): concrete angles the user could expand on next time within this topic — a detail, an opinion, a comparison, a short story — each with a ready-to-use English starter the user can say verbatim.
 - Everything in growth must feel fresh: no overlap with corrections, no generic advice like "practice more".
+- focusNextTime (pick EXACTLY ONE, the retention hook): after building sayBetter/newExpressions, choose the SINGLE expression most worth actively reusing in the NEXT conversation. phrase MUST be copied verbatim from one of the newExpressions[].phrase or sayBetter[].upgraded you just produced — never invent a new expression here. why = one short Chinese clause on why it's the highest-leverage pick.
+- hookLine = one warm, casual Chinese sentence in a FRIEND's voice, teasing them to slip the expression into the next chat. Talk like a buddy who'll be listening, not a coach handing out an assignment. Curiosity/playfulness/a small dare, never duty. GOOD: 「下次咱们再聊，我赌你能自然地甩出一句「…」，到时候我可盯着呢🙂」 or 「等下次逮到机会，把「…」丢进去说说看，我猜你会挺上头。」 BAD (do NOT write like this): 「请在下次练习中使用「…」这个表达」/「下次试着用「…」造句」/「记得复习并运用「…」」— anything that reads like homework, an instruction, or a study task. If growth has no usable newExpressions or sayBetter, omit focusNextTime entirely.
 - If the transcript is too short to infer a topic, set growth to null.
 
 Task judging (only when Task goals are provided in the user message):
@@ -277,11 +284,36 @@ export function normalizeGrowth(raw) {
     return undefined;
   }
 
+  const focusNextTime = normalizeFocusNextTime(growth.focusNextTime);
+
   return {
     topic: String(growth.topic ?? "").trim(),
     sayBetter,
     newExpressions,
     talkMore,
+    ...(focusNextTime ? { focusNextTime } : {}),
+  };
+}
+
+/**
+ * Normalize the "carry ONE expression into next time" hook. Only kept when the
+ * model supplied a phrase + hookLine; the phrase is expected to come from the
+ * already-built growth pack, but we don't hard-drop on a fuzzy match so a
+ * lightly reworded phrase still surfaces the retention hook.
+ */
+function normalizeFocusNextTime(raw) {
+  if (!raw || typeof raw !== "object") {
+    return undefined;
+  }
+  const phrase = String(raw.phrase ?? "").trim();
+  const hookLine = String(raw.hookLine ?? "").trim();
+  if (!phrase || !hookLine) {
+    return undefined;
+  }
+  return {
+    phrase,
+    why: String(raw.why ?? "").trim(),
+    hookLine,
   };
 }
 

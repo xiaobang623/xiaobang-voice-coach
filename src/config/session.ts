@@ -55,18 +55,39 @@ const BASE_SYSTEM_ROLE = [
  */
 type MemoryInput = MemorySummary | UserMemory | null | undefined;
 
-export function buildSystemPrompt(promptSeed?: string, memory?: MemoryInput): string {
+/**
+ * Build a light "reuse hook" for ONE carry-over expression. Injected into the
+ * normal chat so the Coach naturally engineers a single chance for the learner
+ * to reuse what the last recap told them to bring back — the conversation-side
+ * half of the learning loop. Kept soft: never forced, never announced.
+ */
+function buildReuseHookBlock(focusExpression?: string): string {
+  const target = focusExpression?.trim();
+  if (!target) {
+    return "";
+  }
+  return [
+    `Soft hidden goal for THIS chat: at some natural moment, gently steer toward a context where the learner could reuse the expression "${target}".`,
+    "Do it at most once, only when it fits the flow — ask a question or share something that makes that expression the natural thing to say.",
+    "If it doesn't come up naturally, just let it go. Never name it as a target, never say 'try to use', never turn it into an exercise, and never correct them if they skip it.",
+  ].join(" ");
+}
+
+export function buildSystemPrompt(
+  promptSeed?: string,
+  memory?: MemoryInput,
+  focusExpression?: string,
+): string {
   const seed = promptSeed?.trim();
   const topicLine = seed
     ? `Use this as the starting vibe, not a strict agenda: ${seed} If it starts to feel finished, naturally drift to a nearby topic like a friend would.`
     : "Start from anything on the user's mind, and naturally drift when the current thread runs out.";
 
   const memoryBlock = formatMemoryBlock(memory);
-  if (!memoryBlock) {
-    return `${BASE_SYSTEM_ROLE} ${topicLine}`;
-  }
-
-  return `${BASE_SYSTEM_ROLE} ${memoryBlock} ${topicLine}`;
+  const reuseHook = buildReuseHookBlock(focusExpression);
+  return [BASE_SYSTEM_ROLE, memoryBlock, reuseHook, topicLine]
+    .filter(Boolean)
+    .join(" ");
 }
 
 
