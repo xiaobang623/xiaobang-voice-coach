@@ -6,16 +6,23 @@
  * 约定：smoke 必须 100% 通过；任何功能改动后自动跑（pre-push hook + Claude 约定）。
  */
 
+import { readFileSync } from "node:fs";
+
 import {
   cleanTranscriptForReport,
   postProcessReport,
 } from "../../report-post-process.js";
 import {
+  MEMORY_SYSTEM_PROMPT,
   postProcessMemory,
   mergeTrackedExpressions,
   buildTrackedExpressionsFromReport,
   normalizeExpressionKey,
 } from "../../memory-post-process.js";
+import {
+  MEMORY_SYSTEM_PROMPT as SUPABASE_MEMORY_SYSTEM_PROMPT,
+  postProcessMemory as postProcessSupabaseMemory,
+} from "../../supabase/functions/_shared/memoryPostProcess.ts";
 import { postProcessDirections } from "../../directions-post-process.js";
 import { getModelCostRate, calculateCostForUsage } from "../../api/_lib/cost-rates.js";
 import {
@@ -233,6 +240,94 @@ export async function run() {
     makeCheck("合并保留原 status/reuseCount", merged[0].status === "reviewing" && merged[0].reuseCount === 2),
     makeCheck("lastSeenAt 更新为新时间", merged[0].lastSeenAt === "2026-07-16T00:00:00.000Z"),
     makeCheck("normalizeExpressionKey 抹平引号差异", normalizeExpressionKey("I’m fine.") === normalizeExpressionKey("i'm fine")),
+  ]);
+
+  const parityInput = {
+    raw: {
+      summary: {
+        userLevel: "advanced",
+        topics: ["work", "games", "work", "travel", "coffee"],
+        frequentMistakes: ["tense", "articles", "prepositions", "word order", "collocations", "extra"],
+        personalFacts: ["Works as a product manager", "Studies AI products"],
+        coachNotes: "Encourage concise work stories.",
+      },
+      entry: {
+        topic: "AI product planning",
+        highlights: "explained an AI feature clearly",
+        mistakes: "missed articles before nouns",
+        storyNotes: "planned a voice coach memory sync",
+      },
+    },
+    options: {
+      sessionId: "s-parity-new",
+      ownerKey: "user-parity",
+      previousSummary: {
+        userLevel: "intermediate",
+        topics: ["games"],
+        frequentMistakes: ["verb tense"],
+        personalFacts: ["Works remotely"],
+        trackedExpressions: buildTrackedExpressionsFromReport(
+          { corrections: [{ original: "I go", corrected: "I went", type: "grammar" }] },
+          { now: "2026-07-01T00:00:00.000Z", ownerKey: "user-parity" },
+        ),
+      },
+      previousEntries: Array.from({ length: 21 }, (_, index) => ({
+        sessionId: `s-parity-${index}`,
+        topic: `topic-${index}`,
+        highlights: "",
+        mistakes: "",
+        storyNotes: index === 0 ? "old stable detail candidate" : "",
+        createdAt: new Date(Date.UTC(2026, 0, index + 1)).toISOString(),
+      })),
+      report: {
+        corrections: [{ original: "I create plan", corrected: "I created a plan", type: "grammar" }],
+        growth: {
+          topic: "AI planning",
+          sayBetter: [{ original: "good idea", upgraded: "a promising direction", note: "" }],
+          newExpressions: [{ phrase: "follow-through", meaning: "执行到底", example: "" }],
+        },
+      },
+    },
+  };
+  const originalDate = globalThis.Date;
+  const fixedNow = "2026-07-16T12:00:00.000Z";
+  class FixedDate extends originalDate {
+    constructor(...args) {
+      super(...(args.length > 0 ? args : [fixedNow]));
+    }
+    static now() {
+      return new originalDate(fixedNow).getTime();
+    }
+  }
+  globalThis.Date = FixedDate;
+  let vercelMemory;
+  let supabaseMemory;
+  try {
+    vercelMemory = postProcessMemory(parityInput.raw, parityInput.options);
+    supabaseMemory = postProcessSupabaseMemory(parityInput.raw, parityInput.options);
+  } finally {
+    globalThis.Date = originalDate;
+  }
+  record("SMK-MEMORY-004-supabase-parity", [
+    makeCheck("Supabase Edge memory prompt 与 Vercel 一致", SUPABASE_MEMORY_SYSTEM_PROMPT === MEMORY_SYSTEM_PROMPT),
+    makeCheck(
+      "Supabase Edge postProcess 与 Vercel 输出一致",
+      JSON.stringify(supabaseMemory) === JSON.stringify(vercelMemory),
+    ),
+    makeCheck("Supabase Edge 返回 memory-v2 {summary, entries}", Boolean(supabaseMemory.summary && Array.isArray(supabaseMemory.entries))),
+    makeCheck("Supabase Edge entries 滚动保留 20 条", supabaseMemory.entries.length === 20),
+    makeCheck("Supabase Edge personalFacts 保留", supabaseMemory.summary.personalFacts.length === 2),
+  ]);
+
+  const supabaseExtractMemorySource = readFileSync(
+    new URL("../../supabase/functions/extract-memory/index.ts", import.meta.url),
+    "utf8",
+  );
+  record("SMK-MEMORY-005-supabase-context", [
+    makeCheck("Supabase Edge 注入最近 memory entries", supabaseExtractMemorySource.includes("Recent memory entries (oldest to newest):")),
+    makeCheck("Supabase Edge 注入 archiveCandidate 提醒", supabaseExtractMemorySource.includes("Entry likely to be archived after adding this session:")),
+    makeCheck("Supabase Edge 注入 Session ID", supabaseExtractMemorySource.includes("Session ID: ${body.sessionId")),
+    makeCheck("Supabase Edge 用 userId / guestId 生成 ownerKey", supabaseExtractMemorySource.includes('ownerKey: body.userId ?? body.guestId ?? "memory"')),
   ]);
 
   // -------------------------------------------------------------------------

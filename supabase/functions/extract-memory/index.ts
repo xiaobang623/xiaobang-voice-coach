@@ -1,9 +1,10 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { MEMORY_SYSTEM_PROMPT, postProcessMemory } from "../_shared/memoryPostProcess.ts";
 
-// TODO(memory-v2): this Supabase Edge Function is the backup extraction path.
-// The primary Vercel api/extract-memory.js path now writes { summary, entries }.
-// Keep VITE_USE_SUPABASE_FUNCTIONS=false until this backup path is fully synced.
+// Supabase Edge Function is the backup extraction path.
+// It stays in sync with the primary Vercel api/extract-memory.js memory-v2 shape:
+// request includes previousSummary / previousEntries / sessionId, response is { summary, entries }.
+// Keep VITE_USE_SUPABASE_FUNCTIONS=false unless intentionally testing the backup path.
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -14,6 +15,8 @@ interface ExtractMemoryBody {
   transcript: string;
   report?: Record<string, unknown>;
   previousSummary?: Record<string, unknown> | null;
+  previousEntries?: Record<string, unknown>[] | null;
+  sessionId?: string;
   userId?: string;
   guestId?: string;
 }
@@ -27,9 +30,28 @@ function compactMemoryForPrompt(summary: Record<string, unknown> | null | undefi
     userLevel: summary.userLevel,
     topics: Array.isArray(summary.topics) ? summary.topics : [],
     frequentMistakes: Array.isArray(summary.frequentMistakes) ? summary.frequentMistakes : [],
+    personalFacts: Array.isArray(summary.personalFacts) ? summary.personalFacts : [],
     coachNotes: summary.coachNotes ?? summary.notes ?? "",
     updatedAt: summary.updatedAt,
   };
+}
+
+function compactEntriesForPrompt(entries: Record<string, unknown>[] | null | undefined) {
+  if (!Array.isArray(entries)) {
+    return [];
+  }
+
+  return entries
+    .map((entry) => ({
+      sessionId: entry?.sessionId,
+      topic: entry?.topic ?? "",
+      highlights: entry?.highlights ?? "",
+      mistakes: entry?.mistakes ?? "",
+      storyNotes: entry?.storyNotes ?? "",
+      createdAt: entry?.createdAt,
+    }))
+    .filter((entry) => entry.sessionId || entry.topic || entry.storyNotes)
+    .slice(-20);
 }
 
 Deno.serve(async (req) => {
@@ -70,8 +92,18 @@ Deno.serve(async (req) => {
   }
 
   const compactPreviousSummary = compactMemoryForPrompt(body.previousSummary);
+  const compactPreviousEntries = compactEntriesForPrompt(body.previousEntries);
+  const archiveCandidate =
+    compactPreviousEntries.length >= 20 ? compactPreviousEntries[0] : null;
   const previousBlock = compactPreviousSummary
     ? `Previous profile:\n${JSON.stringify(compactPreviousSummary, null, 2)}\n\n`
+    : "";
+  const entriesBlock =
+    compactPreviousEntries.length > 0
+      ? `Recent memory entries (oldest to newest):\n${JSON.stringify(compactPreviousEntries, null, 2)}\n\n`
+      : "";
+  const archiveBlock = archiveCandidate
+    ? `Entry likely to be archived after adding this session:\n${JSON.stringify(archiveCandidate, null, 2)}\n\n`
     : "";
   const reportBlock = body.report ? `Latest report:\n${JSON.stringify(body.report, null, 2)}\n\n` : "";
 
@@ -89,7 +121,7 @@ Deno.serve(async (req) => {
         { role: "system", content: MEMORY_SYSTEM_PROMPT },
         {
           role: "user",
-          content: `${previousBlock}${reportBlock}Transcript:\n${body.transcript}`,
+          content: `${previousBlock}${entriesBlock}${archiveBlock}${reportBlock}Session ID: ${body.sessionId ?? ""}\nTranscript:\n${body.transcript}`,
         },
       ],
     }),
@@ -125,6 +157,8 @@ Deno.serve(async (req) => {
   const memory = postProcessMemory(raw, {
     report: body.report,
     previousSummary: body.previousSummary,
+    previousEntries: body.previousEntries,
+    sessionId: body.sessionId,
     ownerKey: body.userId ?? body.guestId ?? "memory",
   });
 
