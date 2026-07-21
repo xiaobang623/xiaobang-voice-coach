@@ -30,6 +30,7 @@ import {
   buildDailyCostAlerts,
   startOfTodayShanghai,
 } from "../../api/_lib/quota.js";
+import { getGreeting } from "../../src/core/greeting.ts";
 import { makeCheck } from "../lib/harness.mjs";
 
 export const name = "smoke";
@@ -38,6 +39,18 @@ export const kind = "smoke";
 export async function run() {
   const results = [];
   const record = (id, checks) => results.push({ id, checks });
+
+
+  // -------------------------------------------------------------------------
+  // 0. 首页真人感：本地时间问候语
+  // -------------------------------------------------------------------------
+  record("SMK-GREETING-001-time-ranges", [
+    makeCheck("05:00-11:00 显示早上好", getGreeting(new Date("2026-07-21T05:00:00")) === "早上好"),
+    makeCheck("11:00 边界显示中午好", getGreeting(new Date("2026-07-21T11:00:00")) === "中午好"),
+    makeCheck("14:00 边界显示下午好", getGreeting(new Date("2026-07-21T14:00:00")) === "下午好"),
+    makeCheck("18:00 边界显示晚上好", getGreeting(new Date("2026-07-21T18:00:00")) === "晚上好"),
+    makeCheck("00:00-05:00 显示深夜鼓励", getGreeting(new Date("2026-07-21T04:59:00")) === "这么晚还在练，厉害"),
+  ]);
 
   // -------------------------------------------------------------------------
   // 1. transcript 清洗（报告输入净化 → 影响 ASR 噪声误伤率）

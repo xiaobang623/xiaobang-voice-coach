@@ -1,8 +1,9 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { TopicOption } from "../types";
 import type { CorrectionType, UserLevel } from "../types";
 import { CHAT_TOPICS } from "../config/chatTopics";
 import { getCefrLevel } from "../config/levels";
+import { getGreeting } from "../core/greeting";
 import { TOPIC_ICON, TOPIC_TAG } from "../config/topics";
 import { Badge } from "./ui/Badge";
 import { Card } from "./ui/Card";
@@ -128,6 +129,7 @@ export function TopicSelector({
   insightLoading = false,
   topicCounts,
 }: TopicSelectorProps) {
+  const [greeting, setGreeting] = useState(() => getGreeting());
   const hasInsight = Boolean(practiceInsight && practiceInsight.sessionCount7d > 0);
   const levelLabel = practiceInsight?.latestUserLevel
     ? getCefrLevel(practiceInsight.latestUserLevel)
@@ -137,12 +139,19 @@ export function TopicSelector({
     [topicCounts],
   );
 
+  useEffect(() => {
+    const refreshGreeting = () => setGreeting(getGreeting());
+    refreshGreeting();
+    const timer = window.setInterval(refreshGreeting, 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   return (
     <section className="animate-fade-up pb-2">
       <div className="home-shell mx-auto w-full max-w-[980px]">
         <div className="flex items-start justify-between gap-4 py-1 pb-7 md:pt-2">
           <div>
-            <p className="eyebrow">早上好</p>
+            <p className="eyebrow">{greeting}</p>
             <h1 className="mt-2.5 text-[clamp(30px,4vw,42px)] font-semibold leading-[1.12] tracking-tight text-text">
               准备好开口了吗
             </h1>
