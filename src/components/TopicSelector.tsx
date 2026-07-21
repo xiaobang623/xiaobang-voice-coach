@@ -211,7 +211,7 @@ export function TopicSelector({
 
               {showGuestHint ? (
                 <div className="mt-3.5 rounded-[16px] bg-surface-muted px-4 py-3 text-[13px] leading-[1.55] text-text-secondary">
-                  登录后查看你的近 7 天练习次数、总时长、当前水平和高频问题。
+                  登录后查看你的近 7 天练习次数、总时长、当前水平和练习提醒。
                   {onGoToAccount ? (
                     <button
                       type="button"
@@ -250,14 +250,15 @@ export function TopicSelector({
                   <div className="mt-3.5 border-t border-border pt-3.5 text-[13px] leading-[1.55] text-text-secondary">
                     {practiceInsight.topMistakeType ? (
                       <>
-                        本周高频问题：
+                        本周你已经开口 {practiceInsight.sessionCount7d} 次、共{" "}
+                        {formatInsightDuration(practiceInsight.durationSeconds7d)}。想再稳一点，可以留意一下「
                         <strong className="font-semibold text-text">
                           {MISTAKE_LABEL[practiceInsight.topMistakeType]}
                         </strong>
-                        。近 7 天相关建议出现 {practiceInsight.topMistakeCount} 次，下次练习可以刻意留意。
+                        」。
                       </>
                     ) : (
-                      "近 7 天暂未发现重复出现的表达问题，继续保持开口频率。"
+                      "近 7 天表达状态很稳，继续保持开口频率。"
                     )}
                   </div>
                 </>
