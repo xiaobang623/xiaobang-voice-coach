@@ -15,6 +15,8 @@ import type {
 } from "../types";
 import { normalizeUserPreferences } from "../config/preferences";
 import { invalidateGrowthCache } from "./growthCache";
+import { buildReportSummary, normalizeReportSummary } from "./reportSummary";
+import type { ReportSummary, ReportSummaryCorrection } from "./reportSummary";
 import { supabase } from "./supabaseClient";
 
 export interface PersistSessionInput {
@@ -247,7 +249,9 @@ function computeStreaks(dayKeys: string[]): { current: number; longest: number }
   return { current, longest };
 }
 
-function aggregateFrequentMistakes(corrections: Correction[]): GrowthStats["frequentMistakes"] {
+function aggregateFrequentMistakes(
+  corrections: Array<Pick<Correction, "original" | "corrected" | "type" | "frequency">>,
+): GrowthStats["frequentMistakes"] {
   const bucket = new Map<string, GrowthStats["frequentMistakes"][number]>();
 
   for (const correction of corrections) {
@@ -313,13 +317,34 @@ export async function persistSessionReport(input: PersistSessionInput): Promise<
     return;
   }
 
-  const { error: reportError } = await supabase.from("reports").insert({
+  const reportRow = {
     session_id: input.sessionId,
     user_id: userId,
     payload: input.report,
-  });
+    summary: buildReportSummary({
+      ...input.report,
+      sessionId: input.report.sessionId || input.sessionId,
+    }),
+  };
+
+  const { error: reportError } = await supabase.from("reports").insert(reportRow);
 
   if (reportError) {
+    if (isMissingSummaryColumnError(reportError)) {
+      const { error: fallbackReportError } = await supabase.from("reports").insert({
+        session_id: input.sessionId,
+        user_id: userId,
+        payload: input.report,
+      });
+      if (!fallbackReportError) {
+        console.warn("[storage] reports.summary column missing; saved report without summary");
+        invalidateGrowthCache();
+        return;
+      }
+      console.warn("[storage] failed to save report:", fallbackReportError.message);
+      return;
+    }
+
     console.warn("[storage] failed to save report:", reportError.message);
     return;
   }
@@ -499,7 +524,8 @@ export async function listSessionReports(): Promise<ReportJSON[]> {
 interface ReportHistoryRow {
   created_at: string;
   session_id: string;
-  payload: ReportJSON | null;
+  summary?: ReportSummary | Record<string, unknown> | null;
+  payload?: ReportJSON | null;
   sessions:
     | {
         topic: string | null;
@@ -518,12 +544,64 @@ interface ReportHistoryRow {
 
 const GROWTH_REPORT_LIMIT = 30;
 
+function isMissingSummaryColumnError(error: { code?: string; message?: string }): boolean {
+  return (
+    error.code === "42703" ||
+    /column\s+reports\.summary\s+does\s+not\s+exist|summary.*does\s+not\s+exist|could\s+not\s+find.*summary.*column|schema\s+cache.*summary/i.test(
+      error.message ?? "",
+    )
+  );
+}
+
+async function loadGrowthReportRows(): Promise<{
+  data: ReportHistoryRow[] | null;
+  error: { code?: string; message: string } | null;
+}> {
+  if (!supabase) {
+    return { data: [], error: null };
+  }
+
+  const summaryResult = await supabase
+    .from("reports")
+    .select(
+      "created_at, session_id, summary, sessions(topic, duration_seconds, user_speaking_seconds, user_turns)",
+    )
+    .order("created_at", { ascending: false })
+    .limit(GROWTH_REPORT_LIMIT);
+
+  if (!summaryResult.error) {
+    return { data: (summaryResult.data ?? []) as ReportHistoryRow[], error: null };
+  }
+
+  if (!isMissingSummaryColumnError(summaryResult.error)) {
+    return { data: null, error: summaryResult.error };
+  }
+
+  // Deployment safety: if the frontend ships before migration 0013 is applied,
+  // keep the page working by falling back to the legacy payload query.
+  const fallbackResult = await supabase
+    .from("reports")
+    .select(
+      "created_at, session_id, payload, sessions(topic, duration_seconds, user_speaking_seconds, user_turns)",
+    )
+    .order("created_at", { ascending: false })
+    .limit(GROWTH_REPORT_LIMIT);
+
+  if (fallbackResult.error) {
+    return { data: null, error: fallbackResult.error };
+  }
+
+  console.warn("[storage] reports.summary column missing; growth page used legacy payload fallback");
+  return { data: (fallbackResult.data ?? []) as ReportHistoryRow[], error: null };
+}
+
 function buildHistorySummaries(rows: ReportHistoryRow[]): ReportHistoryItem[] {
   const items: ReportHistoryItem[] = [];
 
   for (const row of rows) {
-    const payload = row.payload;
-    const sessionId = payload?.sessionId ?? row.session_id;
+    const summary = normalizeReportSummary(row.summary) ??
+      (row.payload ? buildReportSummary(row.payload, row.created_at) : null);
+    const sessionId = summary?.sessionId || row.payload?.sessionId || row.session_id;
     if (!sessionId) {
       continue;
     }
@@ -532,14 +610,14 @@ function buildHistorySummaries(rows: ReportHistoryRow[]): ReportHistoryItem[] {
 
     items.push({
       sessionId,
-      createdAt: row.created_at || payload?.createdAt || new Date().toISOString(),
+      createdAt: row.created_at || summary?.createdAt || row.payload?.createdAt || new Date().toISOString(),
       topic: sessionMeta?.topic ?? null,
-      durationSeconds: sessionMeta?.duration_seconds ?? payload?.durationSeconds ?? 0,
+      durationSeconds: sessionMeta?.duration_seconds ?? row.payload?.durationSeconds ?? 0,
       userSpeakingSeconds:
-        sessionMeta?.user_speaking_seconds ?? payload?.userSpeakingSeconds ?? null,
-      userTurns: sessionMeta?.user_turns ?? payload?.userTurns ?? null,
-      userLevel: payload?.userLevel ?? "intermediate",
-      correctionCount: payload?.corrections?.length ?? 0,
+        sessionMeta?.user_speaking_seconds ?? row.payload?.userSpeakingSeconds ?? null,
+      userTurns: sessionMeta?.user_turns ?? row.payload?.userTurns ?? null,
+      userLevel: summary?.userLevel ?? row.payload?.userLevel ?? "intermediate",
+      correctionCount: summary?.correctionCount ?? row.payload?.corrections?.length ?? 0,
     });
   }
 
@@ -552,7 +630,7 @@ function buildGrowthStats(
     duration_seconds: number | null;
     user_speaking_seconds?: number | null;
   }>,
-  reportRows: Array<{ payload: ReportJSON | null }>,
+  reportRows: Array<{ summary?: ReportSummary | Record<string, unknown> | null; payload?: ReportJSON | null }>,
   memorySummary: MemorySummary | null,
 ): GrowthStats {
   const dayKeys = sessions.map((row) => toDayKey(row.created_at));
@@ -563,15 +641,17 @@ function buildGrowthStats(
   weekStart.setDate(weekStart.getDate() - ((weekStart.getDay() + 6) % 7));
   const weekStartMs = weekStart.getTime();
 
-  const allCorrections: Correction[] = [];
+  const allCorrections: ReportSummaryCorrection[] = [];
   for (const row of reportRows) {
-    const payload = row.payload;
-    if (payload?.corrections?.length) {
-      allCorrections.push(...payload.corrections);
+    const summary = normalizeReportSummary(row.summary) ??
+      (row.payload ? buildReportSummary(row.payload) : null);
+    if (summary?.corrections?.length) {
+      allCorrections.push(...summary.corrections);
     }
   }
 
-  const latestReport = reportRows[0]?.payload ?? undefined;
+  const latestSummary = normalizeReportSummary(reportRows[0]?.summary) ??
+    (reportRows[0]?.payload ? buildReportSummary(reportRows[0].payload) : null);
 
   return {
     sessionCount: sessions.length,
@@ -585,7 +665,7 @@ function buildGrowthStats(
     }, 0),
     currentStreakDays: streaks.current,
     longestStreakDays: streaks.longest,
-    latestUserLevel: memorySummary?.userLevel ?? latestReport?.userLevel ?? null,
+    latestUserLevel: memorySummary?.userLevel ?? latestSummary?.userLevel ?? null,
     frequentMistakes: aggregateFrequentMistakes(allCorrections),
   };
 }
@@ -627,13 +707,7 @@ export async function loadGrowthPageData(): Promise<GrowthPageData | null> {
       .from("sessions")
       .select("created_at, duration_seconds, user_speaking_seconds, topic")
       .order("created_at", { ascending: true }),
-    supabase
-      .from("reports")
-      .select(
-        "created_at, session_id, payload, sessions(topic, duration_seconds, user_speaking_seconds, user_turns)",
-      )
-      .order("created_at", { ascending: false })
-      .limit(GROWTH_REPORT_LIMIT),
+    loadGrowthReportRows(),
     supabase.from("memory").select("summary, entries").eq("user_id", userId).maybeSingle(),
   ]);
 
