@@ -1,29 +1,8 @@
+import { readJsonBody, setJsonCors } from "./_lib/http.js";
 import { persistSessionReportAdmin } from "./_lib/persist-session.js";
 
-function setCorsHeaders(res) {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "content-type");
-}
-
-async function readJsonBody(req) {
-  if (req.body && typeof req.body === "object") {
-    return req.body;
-  }
-
-  const chunks = [];
-  for await (const chunk of req) {
-    chunks.push(chunk);
-  }
-  const raw = Buffer.concat(chunks).toString("utf8");
-  if (!raw) {
-    return null;
-  }
-  return JSON.parse(raw);
-}
-
 export default async function handler(req, res) {
-  setCorsHeaders(res);
+  setJsonCors(res, "POST, OPTIONS");
 
   if (req.method === "OPTIONS") {
     res.status(204).end();
