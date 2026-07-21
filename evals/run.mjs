@@ -26,16 +26,19 @@ import {
 import { SYSTEM_PROMPT } from "../report-post-process.js";
 import { MEMORY_SYSTEM_PROMPT } from "../memory-post-process.js";
 import { DIRECTIONS_SYSTEM_PROMPT } from "../directions-post-process.js";
+import { buildSystemPrompt } from "../src/config/session.ts";
 import * as smokeSuite from "./suites/smoke.mjs";
 import * as reportSuite from "./suites/report.mjs";
 import * as memorySuite from "./suites/memory.mjs";
 import * as directionsSuite from "./suites/directions.mjs";
+import * as conversationSuite from "./suites/conversation.mjs";
 
 const SUITES = {
   smoke: smokeSuite,
   report: reportSuite,
   memory: memorySuite,
   directions: directionsSuite,
+  conversation: conversationSuite,
 };
 
 function parseArgs(argv) {
@@ -87,6 +90,7 @@ const meta = {
     report: sha8(SYSTEM_PROMPT),
     memory: sha8(MEMORY_SYSTEM_PROMPT),
     directions: sha8(DIRECTIONS_SYSTEM_PROMPT),
+    conversation: sha8(buildSystemPrompt()),
   },
 };
 

@@ -58,6 +58,52 @@ export function loadEnvLocal() {
 export const EVAL_MODEL = "deepseek-chat";
 export const EVAL_TEMPERATURE = 0; // 评测固定 0，保证可复现（生产为 0.2~0.3）
 
+export async function callDeepseekText({ system, user, messages, temperature = EVAL_TEMPERATURE, maxTokens = 200, maxRetries = 2 }) {
+  const apiKey = process.env.DEEPSEEK_API_KEY;
+  if (!apiKey) {
+    throw new Error("DEEPSEEK_API_KEY missing — 请确认 .env.local 或环境变量");
+  }
+
+  const chatMessages = [
+    { role: "system", content: system },
+    ...(messages ?? [{ role: "user", content: user }]),
+  ];
+
+  let lastError;
+  for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+    try {
+      const response = await fetch("https://api.deepseek.com/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: EVAL_MODEL,
+          temperature,
+          max_tokens: maxTokens,
+          messages: chatMessages,
+        }),
+      });
+      if (!response.ok) {
+        throw new Error(`DeepSeek HTTP ${response.status}: ${(await response.text()).slice(0, 200)}`);
+      }
+      const completion = await response.json();
+      const content = completion?.choices?.[0]?.message?.content;
+      if (!content || typeof content !== "string") {
+        throw new Error("Empty model response");
+      }
+      return content.trim();
+    } catch (error) {
+      lastError = error;
+      if (attempt < maxRetries) {
+        await new Promise((resolve) => setTimeout(resolve, 1500 * (attempt + 1)));
+      }
+    }
+  }
+  throw lastError;
+}
+
 export async function callDeepseekJson({ system, user, temperature = EVAL_TEMPERATURE, maxRetries = 2 }) {
   const apiKey = process.env.DEEPSEEK_API_KEY;
   if (!apiKey) {
@@ -241,7 +287,7 @@ export function writeResults({ summaries, caseDetails, meta }) {
     `- 时间：${timestamp}`,
     `- commit：\`${meta.git.commit}\`${meta.git.dirty ? "（工作区有未提交改动）" : ""}`,
     `- model：${meta.model} · temperature ${meta.temperature}`,
-    `- prompt hash：report \`${meta.promptHashes.report}\` · memory \`${meta.promptHashes.memory}\` · directions \`${meta.promptHashes.directions}\``,
+    `- prompt hash：report \`${meta.promptHashes.report}\` · memory \`${meta.promptHashes.memory}\` · directions \`${meta.promptHashes.directions}\` · conversation \`${meta.promptHashes.conversation ?? "—"}\``,
     "",
     "| Suite | 结论 | checks | 通过率 | judge 均分 |",
     "|---|---|---:|---:|---:|",

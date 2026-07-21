@@ -30,6 +30,7 @@ import {
   buildDailyCostAlerts,
   startOfTodayShanghai,
 } from "../../api/_lib/quota.js";
+import { buildSystemPrompt } from "../../src/config/session.ts";
 import { getGreeting } from "../../src/core/greeting.ts";
 import { makeCheck } from "../lib/harness.mjs";
 
@@ -50,6 +51,18 @@ export async function run() {
     makeCheck("14:00 边界显示下午好", getGreeting(new Date("2026-07-21T14:00:00")) === "下午好"),
     makeCheck("18:00 边界显示晚上好", getGreeting(new Date("2026-07-21T18:00:00")) === "晚上好"),
     makeCheck("00:00-05:00 显示深夜鼓励", getGreeting(new Date("2026-07-21T04:59:00")) === "这么晚还在练，厉害"),
+  ]);
+
+
+  // -------------------------------------------------------------------------
+  // 0.1 对话 persona：卡壳救场规则必须进生产 prompt
+  // -------------------------------------------------------------------------
+  const conversationPrompt = buildSystemPrompt();
+  record("SMK-CONV-001-stuck-rescue-rule", [
+    makeCheck("包含 RULE 6", conversationPrompt.includes("RULE 6")),
+    makeCheck("覆盖 quiet/hesitates/stuck", /quiet|hesitates|stuck/i.test(conversationPrompt)),
+    makeCheck("要求安抚和小台阶", /take your time|no rush/i.test(conversationPrompt) && /scaffold|simpler way|two easy options/i.test(conversationPrompt)),
+    makeCheck("明确不纠错", /Never correct/i.test(conversationPrompt)),
   ]);
 
   // -------------------------------------------------------------------------
