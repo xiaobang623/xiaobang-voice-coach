@@ -250,6 +250,17 @@ export async function run() {
     makeCheck("无 growth 内容时 focusNextTime 一并省略", !("growth" in focusDroppedReport)),
   ]);
 
+  const reportViewSource = readFileSync(
+    new URL("../../src/components/ReportView.tsx", import.meta.url),
+    "utf8",
+  );
+  record("SMK-REPORT-010-focus-chunk-explained-in-ui", [
+    makeCheck("短语型 focus 展示推荐整句", reportViewSource.includes("推荐整句")),
+    makeCheck("短语型 focus 单独展示核心表达", reportViewSource.includes("核心表达")),
+    makeCheck("focus 会复用 newExpressions 的 meaning", reportViewSource.includes("expressionMeaning")),
+    makeCheck("focus 会复用 newExpressions 的 example 作为完整句", reportViewSource.includes("recommendedSentence")),
+  ]);
+
   // -------------------------------------------------------------------------
   // 3. 记忆后处理 + 掌握度追踪（功能 10 / 10.1）
   // -------------------------------------------------------------------------

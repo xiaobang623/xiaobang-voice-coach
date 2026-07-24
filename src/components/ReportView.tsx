@@ -1,6 +1,7 @@
 import type {
   Correction,
   GrowthNewExpression,
+  GrowthSayBetter,
   GrowthTalkMore,
   ReportGrowth,
   ReportJSON,
@@ -24,6 +25,9 @@ export interface ReportViewProps {
 interface CoreExpression {
   original?: string;
   improved: string;
+  corePhrase?: string;
+  recommendedSentence?: string;
+  expressionMeaning?: string;
   why: string;
   example?: string;
   hookLine: string;
@@ -97,13 +101,42 @@ function findCorrectionForFocus(report: ReportJSON, focusPhrase?: string): Corre
   );
 }
 
+function findNewExpressionForFocus(
+  growth: ReportGrowth | undefined,
+  focusPhrase?: string,
+): GrowthNewExpression | undefined {
+  if (!growth || !focusPhrase) {
+    return undefined;
+  }
+  return growth.newExpressions.find((item) => isRelatedExpression(item.phrase, focusPhrase));
+}
+
+function findSayBetterForFocus(
+  growth: ReportGrowth | undefined,
+  focusPhrase?: string,
+): GrowthSayBetter | undefined {
+  if (!growth || !focusPhrase) {
+    return undefined;
+  }
+  return growth.sayBetter.find((item) => isRelatedExpression(item.upgraded, focusPhrase));
+}
+
 function pickCoreExpression(report: ReportJSON): CoreExpression {
   const growth = getGrowth(report);
   const focus = growth?.focusNextTime;
   const relatedCorrection = findCorrectionForFocus(report, focus?.phrase);
+  const focusNewExpression = findNewExpressionForFocus(growth, focus?.phrase);
+  const focusSayBetter = findSayBetterForFocus(growth, focus?.phrase);
 
   if (focus?.phrase) {
-    const why = [relatedCorrection?.explanation, focus.why]
+    const recommendedSentence =
+      focusNewExpression?.example && !isSameExpression(focusNewExpression.example, focus.phrase)
+        ? focusNewExpression.example
+        : undefined;
+    const meaningLine = focusNewExpression?.meaning
+      ? `${focus.phrase} = ${focusNewExpression.meaning}`
+      : undefined;
+    const why = [meaningLine, relatedCorrection?.explanation, focus.why || focusSayBetter?.note]
       .filter(isValidText)
       .filter((item, index, list) => list.findIndex((candidate) => candidate === item) === index)
       .join(" ");
@@ -111,8 +144,11 @@ function pickCoreExpression(report: ReportJSON): CoreExpression {
     return {
       original: relatedCorrection?.original,
       improved: focus.phrase,
+      corePhrase: recommendedSentence ? focus.phrase : undefined,
+      recommendedSentence,
+      expressionMeaning: focusNewExpression?.meaning,
       why: why || "这是一句下次最容易复用、也最贴近这次话题的表达。",
-      example: relatedCorrection?.example,
+      example: recommendedSentence ? undefined : (relatedCorrection?.example ?? focusNewExpression?.example),
       hookLine: focus.hookLine || "下次先把这一句自然用出来，就已经赢了。",
       relatedCorrection,
       source: "focus",
@@ -270,7 +306,10 @@ function CoreExpressionSection({
   shortReport: boolean;
 }) {
   const core = pickCoreExpression(report);
-  const showOriginal = core.original && !isSameExpression(core.original, core.improved);
+  const primaryExpression = core.recommendedSentence ?? core.improved;
+  const showOriginal = core.original && !isSameExpression(core.original, primaryExpression);
+  const showCorePhrase =
+    core.corePhrase && !isSameExpression(core.corePhrase, core.recommendedSentence);
 
   return (
     <Card variant="elevated" className="p-5">
@@ -285,9 +324,23 @@ function CoreExpressionSection({
       />
 
       <div className="mt-5 rounded-[22px] bg-text p-5 text-surface">
-        <p className="text-xs font-semibold text-accent-gold-on-canvas">推荐说法</p>
-        <p className="mt-2 text-[24px] font-bold leading-tight tracking-tight">{core.improved}</p>
+        <p className="text-xs font-semibold text-accent-gold-on-canvas">
+          {core.recommendedSentence ? "推荐整句" : "推荐说法"}
+        </p>
+        <p className="mt-2 text-[24px] font-bold leading-tight tracking-tight">{primaryExpression}</p>
       </div>
+
+      {showCorePhrase ? (
+        <div className="mt-4 rounded-2xl border border-border-subtle bg-surface p-4">
+          <p className="text-xs font-semibold text-text-muted">核心表达</p>
+          <p className="mt-1 text-[18px] font-bold leading-snug text-text">{core.corePhrase}</p>
+          {core.expressionMeaning ? (
+            <p className="mt-2 text-sm leading-relaxed text-text-secondary">
+              = {core.expressionMeaning}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
 
       {showOriginal ? (
         <div className="mt-4 rounded-2xl bg-bg-warm/70 p-4">
