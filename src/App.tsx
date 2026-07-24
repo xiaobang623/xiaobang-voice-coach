@@ -308,12 +308,6 @@ function App() {
       userId: analyticsActor.userId,
       guestId: analyticsActor.guestId,
       sessionId,
-      props: {
-        correctionsCount: Array.isArray(report.corrections) ? report.corrections.length : 0,
-        newExpressionsCount: Array.isArray(report.growth?.newExpressions)
-          ? report.growth.newExpressions.length
-          : 0,
-      },
     });
   }, [practiceScreen, report, analyticsActor]);
 
@@ -589,14 +583,6 @@ function App() {
         });
         if (isCurrentRun()) {
           setExpressionSummary(summary);
-          trackEvent("repractice_complete", {
-            userId: analyticsActor.userId,
-            guestId: analyticsActor.guestId,
-            sessionId,
-            props: {
-              expressionCount: expressionPracticeContext.targetExpressions.length,
-            },
-          });
         }
       } catch (error) {
         if (isCurrentRun()) {

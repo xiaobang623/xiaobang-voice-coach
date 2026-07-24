@@ -5,7 +5,6 @@ import type {
   CostProviderRow,
   DashboardSummary,
   FunnelSummaryData,
-  LearningMetricsData,
   ModelInstancesData,
   Pagination,
   ResolvedVoiceConfigPreview,
@@ -107,22 +106,6 @@ export async function fetchFunnelSummary(params: {
   const result = await adminFetch<ApiSuccess<FunnelSummaryData>>(
     `/api/admin/funnel-summary?${query}`,
   );
-  return result.data;
-}
-
-export async function fetchLearningMetrics(params?: {
-  dateFrom?: string;
-  dateTo?: string;
-}): Promise<LearningMetricsData> {
-  const query = new URLSearchParams();
-  if (params?.dateFrom) {
-    query.set("date_from", params.dateFrom);
-  }
-  if (params?.dateTo) {
-    query.set("date_to", params.dateTo);
-  }
-  const suffix = query.size > 0 ? `?${query.toString()}` : "";
-  const result = await adminFetch<ApiSuccess<LearningMetricsData>>(`/api/admin/learning-metrics${suffix}`);
   return result.data;
 }
 

@@ -12,7 +12,6 @@ import { getCefrLevel, getLevelInfo } from "../config/levels";
 import { Badge } from "./ui/Badge";
 import { Button } from "./ui/Button";
 import { Card } from "./ui/Card";
-import { trackEventOnce } from "../core/analytics";
 
 export interface ReportViewProps {
   report: ReportJSON | null;
@@ -438,11 +437,9 @@ function MoreSuggestions({
   const { expressions, upgrades, talkMore } = pickNextExpressions(report, false);
   const levelInfo = getLevelInfo(getCefrLevel(report.userLevel));
 
-  const remainingCorrections = report.corrections
-    .map((item, index) => ({ item, index }))
-    .filter(
-      ({ item }) => !isCoveredByCore(item.original, core) && !isCoveredByCore(item.corrected, core),
-    );
+  const remainingCorrections = report.corrections.filter(
+    (item) => !isCoveredByCore(item.original, core) && !isCoveredByCore(item.corrected, core),
+  );
   const visibleExpressionPhrases = new Set(expressions.map((item) => compactText(item.phrase)));
   const remainingExpressions =
     growth?.newExpressions.filter(
@@ -507,32 +504,13 @@ function MoreSuggestions({
           </div>
         ))}
 
-        {remainingCorrections.map(({ item, index }) => (
-          <details
-            key={`${item.type}-${item.corrected}-${index}`}
-            className="group/correction rounded-2xl bg-bg-warm/70 p-4"
-            onToggle={(event) => {
-              if (event.currentTarget.open) {
-                trackEventOnce(`correction_view:${report.sessionId}:${index}`, "correction_view", {
-                  sessionId: report.sessionId,
-                  props: { index },
-                });
-              }
-            }}
-          >
-            <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
-              <div>
-                <p className="text-xs font-semibold text-text-muted">小修改</p>
-                <p className="mt-1 text-sm font-semibold text-text">{item.corrected}</p>
-              </div>
-              <span className="rounded-full bg-surface px-2.5 py-1 text-[11px] font-semibold text-text-muted group-open/correction:hidden">展开</span>
-              <span className="hidden rounded-full bg-surface px-2.5 py-1 text-[11px] font-semibold text-text-muted group-open/correction:inline">收起</span>
-            </summary>
-            <div className="mt-3 border-t border-border-subtle pt-3">
-              <p className="text-sm text-text-muted line-through decoration-border-strong">{item.original}</p>
-              <p className="mt-2 text-sm leading-relaxed text-text-secondary">{item.explanation}</p>
-            </div>
-          </details>
+        {remainingCorrections.map((item, index) => (
+          <div key={`${item.type}-${item.corrected}-${index}`} className="rounded-2xl bg-bg-warm/70 p-4">
+            <p className="text-xs font-semibold text-text-muted">小修改</p>
+            <p className="mt-1 text-sm text-text-muted line-through decoration-border-strong">{item.original}</p>
+            <p className="mt-1 text-sm font-semibold text-text">{item.corrected}</p>
+            <p className="mt-2 text-sm leading-relaxed text-text-secondary">{item.explanation}</p>
+          </div>
         ))}
 
         {remainingUpgrades.map((item) => (
