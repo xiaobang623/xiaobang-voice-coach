@@ -1,6 +1,11 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { AccountPanel } from "./AccountPanel";
-import { GrowthPanel } from "./GrowthView";
+import {
+  ExpressionLibraryPanel,
+  GrowthDashboard,
+  GrowthPanel,
+  MemoryManagementPanel,
+} from "./GrowthView";
 import { SettingsIcon } from "./SettingsIcon";
 import { SettingsView } from "./SettingsView";
 import { SubPageHeader } from "./SubPageHeader";
@@ -62,7 +67,7 @@ const ICONS = {
   ),
 };
 
-type MeScreen = "home" | "settings" | "account" | "record";
+type MeScreen = "home" | "settings" | "account" | "record" | "expressions" | "memory";
 type AccountBackTarget = "home" | "settings";
 
 export interface MeViewProps {
@@ -185,6 +190,24 @@ export function MeView({
     );
   }
 
+  if (screen === "expressions") {
+    return (
+      <section className="animate-fade-up py-2">
+        <SubPageHeader title="表达库" onBack={() => setScreen("home")} />
+        <ExpressionLibraryPanel isGuest={isAnonymous} onGoToAccount={() => openAccount("home")} />
+      </section>
+    );
+  }
+
+  if (screen === "memory") {
+    return (
+      <section className="animate-fade-up py-2">
+        <SubPageHeader title="小榜记忆" onBack={() => setScreen("home")} />
+        <MemoryManagementPanel isGuest={isAnonymous} onGoToAccount={() => openAccount("home")} />
+      </section>
+    );
+  }
+
   if (screen === "settings") {
     return (
       <section className="animate-fade-up py-2">
@@ -241,6 +264,15 @@ export function MeView({
       </header>
 
       <div className="space-y-6">
+        <GrowthDashboard
+          isGuest={isAnonymous}
+          onGoToAccount={() => openAccount("home")}
+          onOpenRecord={() => setScreen("record")}
+          onOpenExpressions={() => setScreen("expressions")}
+          onOpenMemory={() => setScreen("memory")}
+          onOpenPreferences={() => setScreen("settings")}
+        />
+
         <SettingsGroup title="账号">
           <SettingsRow
             icon={ICONS.profile}
@@ -248,12 +280,6 @@ export function MeView({
             onClick={() => openAccount("home")}
             isLink
           />
-        </SettingsGroup>
-
-        <SettingsGroup title="练习">
-          <SettingsRow icon={ICONS.list} label="练习记录" value="语言档案 / 历史复盘" isLink onClick={() => setScreen("record")} />
-          <div className="border-t border-border" />
-          <SettingsRow icon={ICONS.voice} label="练习偏好" value="音色 / 语速 / 字幕" isLink onClick={() => setScreen("settings")} />
         </SettingsGroup>
 
         {!isAnonymous ? (
