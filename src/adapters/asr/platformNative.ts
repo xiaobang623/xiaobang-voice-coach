@@ -4,6 +4,13 @@ export interface PlatformNativeAsrHandlers {
   onPartial: (text: string) => void;
   onFinal: (text: string) => void;
   /**
+   * Amendment preview: after a premature commit, the browser may keep emitting
+   * the whole utterance with more words appended. This should update the
+   * already-submitted user bubble instead of appending duplicate interim
+   * bubbles.
+   */
+  onAmendPartial?: (fullText: string) => void;
+  /**
    * 反悔合并：上次提交后用户马上接着说，浏览器把整句重新吐了 final。
    * 收到完整合并句时回调——应当替换上一轮提交（撤销旧回复、整句重新提问），
    * 而不是把剩余尾巴当成新回合。
@@ -19,21 +26,21 @@ export interface PlatformNativeAsrOptions {
 }
 
 /** 只有 interim（浏览器还没断句）时，静默多久后提交整轮文本。 */
-const INTERIM_COMMIT_DELAY_MS = 480;
+const INTERIM_COMMIT_DELAY_MS = 850;
 /**
  * 浏览器已给出 final 片段后，再等一小段时间才提交：
  * 用户句中停顿时浏览器常提前断句，这个窗口用来把「一次开口」合并成一个气泡。
  * 07-13 从 240ms 微抬到 300ms：420/240 被用户反馈「断句稍微有点快」，
  * 回抬一点点找手感（仍比放松前的 550/280 更快）。
  */
-const FINAL_COMMIT_DELAY_MS = 300;
+const FINAL_COMMIT_DELAY_MS = 650;
 /**
  * 语义判停（本地启发式，零成本）：文本结尾看起来「话没说完」时，
  * 把提交窗口拉长到这个值，容忍学习者句中想词的停顿。
  * 07-13 从 1000ms 收到 700ms：整 1 秒的等待让对话「端着不接」，不像真人；
  * 判早了有反悔合并（onAmend）兜底，宁可偏向「敢接话」。
  */
-const INCOMPLETE_COMMIT_DELAY_MS = 700;
+const INCOMPLETE_COMMIT_DELAY_MS = 1200;
 /** 同一段识别 run 内，浏览器把已提交文本连同新内容重新吐 final 的去重窗口。 */
 const PREFIX_DEDUPE_WINDOW_MS = 10_000;
 const DEFAULT_PLATFORM_NATIVE_ASR_LOCALE = "en-US";
@@ -230,30 +237,36 @@ export class BrowserPlatformNativeAsr {
       }
 
       let interimText = "";
-      let finalText = "";
+      const finalSegments: string[] = [];
 
-      for (let index = event.resultIndex; index < event.results.length; index += 1) {
+      for (let index = 0; index < event.results.length; index += 1) {
         const result = event.results[index];
         const transcript = result[0]?.transcript ?? "";
         if (result.isFinal) {
-          finalText += transcript;
+          finalSegments.push(transcript);
         } else {
           interimText += transcript;
         }
       }
 
-      // 本轮内的 final 片段先累积，不立刻提交——避免一次开口被拆成多个气泡。
-      const normalizedFinal = normalizeTranscript(finalText);
-      if (normalizedFinal) {
-        this.pendingFinalText = normalizeTranscript(
-          `${this.pendingFinalText} ${normalizedFinal}`,
-        );
-      }
+      // SpeechRecognition.results 是当前 run 的完整结果列表。直接重建 final 文本，
+      // 不做增量追加，避免 Chrome/Safari 重复上报同一 final 片段时出现
+      // “I made I made” 这类 UI 复读。
+      const normalizedFinal = normalizeTranscript(finalSegments.join(" "));
+      this.pendingFinalText = normalizedFinal;
 
       const combined = normalizeTranscript(`${this.pendingFinalText} ${interimText}`);
       if (combined) {
         this.latestCombinedText = combined;
-        this.handlers.onPartial(combined);
+        if (this.isSubmittedRepeatPreview(combined)) {
+          // The browser can re-emit the exact final text after we've already
+          // submitted it. Keep the existing bubble; do not append another
+          // non-final duplicate while waiting for the coach reply.
+        } else if (this.isAmendmentPreview(combined) && this.handlers.onAmendPartial) {
+          this.handlers.onAmendPartial(combined);
+        } else {
+          this.handlers.onPartial(combined);
+        }
         // 有 final 说明浏览器已检测到断句，用更短的窗口提交；否则等 interim 稳定。
         // 语义判停：结尾像「话没说完」（连接词/介词/助动词等收尾）时拉长窗口，
         // 容忍学习者句中想词的停顿，避免一次开口被拆成两个气泡。
@@ -374,6 +387,30 @@ export class BrowserPlatformNativeAsr {
       window.clearTimeout(this.interimCommitTimer);
       this.interimCommitTimer = null;
     }
+  }
+
+  private isAmendmentPreview(text: string): boolean {
+    const content = normalizeTranscript(text).toLowerCase();
+    const normalizedLast = this.lastSubmittedText.toLowerCase();
+    if (
+      this.runId !== this.lastSubmittedRunId ||
+      normalizedLast.length === 0 ||
+      Date.now() - this.lastSubmittedAt >= PREFIX_DEDUPE_WINDOW_MS
+    ) {
+      return false;
+    }
+    return content !== normalizedLast && content.startsWith(`${normalizedLast} `);
+  }
+
+  private isSubmittedRepeatPreview(text: string): boolean {
+    const content = normalizeTranscript(text).toLowerCase();
+    const normalizedLast = this.lastSubmittedText.toLowerCase();
+    return (
+      this.runId === this.lastSubmittedRunId &&
+      normalizedLast.length > 0 &&
+      Date.now() - this.lastSubmittedAt < PREFIX_DEDUPE_WINDOW_MS &&
+      content === normalizedLast
+    );
   }
 
   private submitFinal(text: string): void {
