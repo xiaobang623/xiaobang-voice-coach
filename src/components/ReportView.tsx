@@ -1,10 +1,9 @@
-import { useState } from "react";
 import type {
   Correction,
-  CorrectionType,
+  GrowthNewExpression,
+  GrowthTalkMore,
   ReportGrowth,
   ReportJSON,
-  GrowthNewExpression,
   ReportReusedExpression,
   TaskGoal,
   TaskGoalStatus,
@@ -13,17 +12,6 @@ import { getCefrLevel, getLevelInfo } from "../config/levels";
 import { Badge } from "./ui/Badge";
 import { Button } from "./ui/Button";
 import { Card } from "./ui/Card";
-import { LevelSystemCard } from "./LevelSystem";
-import {
-  CheckCircleIcon,
-  CollocationIcon,
-  EmptyCircleIcon,
-  GrammarIcon,
-  HalfCircleIcon,
-  NaturalnessIcon,
-  StructureIcon,
-  VocabularyIcon,
-} from "./ui/icons";
 
 export interface ReportViewProps {
   report: ReportJSON | null;
@@ -33,398 +21,533 @@ export interface ReportViewProps {
   onRepracticeExpressions?: (expressions: GrowthNewExpression[]) => void;
 }
 
+interface CoreExpression {
+  original?: string;
+  improved: string;
+  why: string;
+  example?: string;
+  hookLine: string;
+  relatedCorrection?: Correction;
+  source: "focus" | "correction" | "fallback";
+}
+
 function formatDuration(seconds: number): string {
-  const minutes = Math.floor(seconds / 60);
-  const rest = seconds % 60;
+  const safeSeconds = Math.max(0, Math.round(seconds));
+  const minutes = Math.floor(safeSeconds / 60);
+  const rest = safeSeconds % 60;
   if (minutes === 0) {
     return `${rest} 秒`;
   }
   return rest === 0 ? `${minutes} 分钟` : `${minutes} 分 ${rest} 秒`;
 }
 
-const DIMENSION_META: Record<
-  CorrectionType,
-  { label: string; Icon: typeof GrammarIcon; description: string }
-> = {
-  grammar: { label: "语法", Icon: GrammarIcon, description: "时态、搭配、冠词等语法问题" },
-  collocation: { label: "搭配", Icon: CollocationIcon, description: "词语组合不够地道" },
-  vocabulary: { label: "用词", Icon: VocabularyIcon, description: "可以选更准确的词" },
-  naturalness: {
-    label: "地道表达",
-    Icon: NaturalnessIcon,
-    description: "语法没错，但母语者会换种说法",
-  },
-  structure: { label: "句式结构", Icon: StructureIcon, description: "句子组织和衔接可以更好" },
-};
+function compactText(value?: string | null): string {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[“”"'‘’`]/g, "")
+    .replace(/[?.!,，。！？:：;；]/g, "")
+    .replace(/\s+/g, " ");
+}
 
-const SEVERITY_LABEL = {
-  critical: "重要",
-  important: "建议改",
-  minor: "小优化",
-} as const;
+function isSameExpression(a?: string | null, b?: string | null): boolean {
+  const left = compactText(a);
+  const right = compactText(b);
+  return Boolean(left && right && left === right);
+}
 
-const DIMENSION_ORDER: CorrectionType[] = [
-  "grammar",
-  "collocation",
-  "vocabulary",
-  "naturalness",
-  "structure",
-];
+function isRelatedExpression(a?: string | null, b?: string | null): boolean {
+  const left = compactText(a);
+  const right = compactText(b);
+  if (!left || !right) {
+    return false;
+  }
+  return left === right || left.includes(right) || right.includes(left);
+}
 
-const TASK_STATUS_META: Record<
-  TaskGoalStatus,
-  { Icon: typeof CheckCircleIcon; label: string; tone: string }
-> = {
-  done: { Icon: CheckCircleIcon, label: "达成", tone: "text-success" },
-  partial: { Icon: HalfCircleIcon, label: "部分达成", tone: "text-warning" },
-  missed: { Icon: EmptyCircleIcon, label: "未达成", tone: "text-text-muted" },
-};
+function isValidText(value?: string | null): value is string {
+  return Boolean(value && value.trim().length > 0);
+}
 
-function TaskResultsSection({
-  report,
-  taskGoals,
-}: {
-  report: ReportJSON;
-  taskGoals: TaskGoal[];
-}) {
-  if (!report.taskResults?.length) {
-    return null;
+function getGrowth(report: ReportJSON): ReportGrowth | undefined {
+  if (!report.growth) {
+    return undefined;
+  }
+  return {
+    ...report.growth,
+    sayBetter: Array.isArray(report.growth.sayBetter) ? report.growth.sayBetter : [],
+    newExpressions: Array.isArray(report.growth.newExpressions) ? report.growth.newExpressions : [],
+    talkMore: Array.isArray(report.growth.talkMore) ? report.growth.talkMore : [],
+  };
+}
+
+function findCorrectionForFocus(report: ReportJSON, focusPhrase?: string): Correction | undefined {
+  if (!report.corrections.length) {
+    return undefined;
+  }
+  if (!focusPhrase) {
+    return report.corrections[0];
+  }
+  return (
+    report.corrections.find(
+      (item) =>
+        isRelatedExpression(item.original, focusPhrase) ||
+        isRelatedExpression(item.corrected, focusPhrase),
+    ) ?? report.corrections[0]
+  );
+}
+
+function pickCoreExpression(report: ReportJSON): CoreExpression {
+  const growth = getGrowth(report);
+  const focus = growth?.focusNextTime;
+  const relatedCorrection = findCorrectionForFocus(report, focus?.phrase);
+
+  if (focus?.phrase) {
+    const why = [relatedCorrection?.explanation, focus.why]
+      .filter(isValidText)
+      .filter((item, index, list) => list.findIndex((candidate) => candidate === item) === index)
+      .join(" ");
+
+    return {
+      original: relatedCorrection?.original,
+      improved: focus.phrase,
+      why: why || "这是一句下次最容易复用、也最贴近这次话题的表达。",
+      example: relatedCorrection?.example,
+      hookLine: focus.hookLine || "下次先把这一句自然用出来，就已经赢了。",
+      relatedCorrection,
+      source: "focus",
+    };
   }
 
-  const goalDescById = Object.fromEntries(taskGoals.map((g) => [g.id, g.desc]));
+  if (relatedCorrection) {
+    return {
+      original: relatedCorrection.original,
+      improved: relatedCorrection.corrected,
+      why: relatedCorrection.explanation || "这样说会更自然，也更接近真实口语里的表达方式。",
+      example: relatedCorrection.example,
+      hookLine: "下次先把这一句自然说出来，就已经赢了。",
+      relatedCorrection,
+      source: "correction",
+    };
+  }
 
-  return (
-    <div>
-      <div className="flex items-baseline justify-between gap-3">
-        <h3 className="text-base font-medium text-text-secondary">任务完成度</h3>
-        {report.taskScore ? (
-          <span className="text-lg font-semibold tabular-nums text-accent-gold">{report.taskScore}</span>
-        ) : null}
-      </div>
-      <ul className="mt-4 space-y-3">
-        {report.taskResults.map((result) => {
-          const meta = TASK_STATUS_META[result.status] ?? TASK_STATUS_META.missed;
-          const desc = goalDescById[result.goalId] ?? result.goalId;
-          return (
-            <li key={result.goalId}>
-              <Card variant="elevated" className="p-4">
-                <div className="flex items-start gap-2.5">
-                  <meta.Icon className={`mt-0.5 h-5 w-5 shrink-0 ${meta.tone}`} />
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium text-text">{desc}</p>
-                    <p className={`mt-1 text-xs font-medium ${meta.tone}`}>{meta.label}</p>
-                    <p className="mt-2 text-xs leading-relaxed text-text-muted">{result.reason}</p>
-                  </div>
-                </div>
-              </Card>
-            </li>
-          );
-        })}
-      </ul>
-    </div>
-  );
+  return {
+    improved: "Could you give me an example?",
+    why: "这是一句低压力、高频、真实对话里马上能用的表达。想让对方多解释一点时，可以直接用。",
+    example: "Could you give me an example?",
+    hookLine: "下次卡住时，先用这句把对话接下去。",
+    source: "fallback",
+  };
 }
 
-function StatCard({
-  label,
-  value,
-  note,
-}: {
-  label: string;
-  value: string;
-  note?: string;
-}) {
-  return (
-    <Card variant="ghost" className="p-4 text-center">
-      <p className="text-2xl font-semibold tabular-nums text-text">{value}</p>
-      <p className="mt-1 text-xs text-text-muted">{label}</p>
-      {note ? <p className="mt-2 text-[11px] leading-relaxed text-text-secondary">{note}</p> : null}
-    </Card>
-  );
+function hasEnoughContent(report: ReportJSON, wordCount?: number, sentenceCount?: number): boolean {
+  const growth = getGrowth(report);
+  const contentCount =
+    (growth?.sayBetter.length ?? 0) +
+    (growth?.newExpressions.length ?? 0) +
+    (growth?.talkMore.length ?? 0) +
+    report.corrections.length +
+    (report.reusedExpressions?.length ?? 0);
+  const sentences = sentenceCount ?? report.userTurns ?? 0;
+  const words = wordCount ?? 0;
+
+  return report.durationSeconds >= 90 || sentences >= 4 || words >= 25 || contentCount >= 5;
 }
 
-function buildSpeakingStatNote(report: ReportJSON): string {
+function buildSpeakingDelta(report: ReportJSON): string | null {
   const speakingSeconds = report.userSpeakingSeconds;
-  const turns = report.userTurns;
-  if (typeof speakingSeconds !== "number" || typeof turns !== "number") {
-    return "旧报告未记录开口量";
-  }
-
-  const base = `你说了 ${formatDuration(Math.max(0, speakingSeconds))} 英语 · ${Math.max(0, turns)} 轮对话`;
   const previousSeconds = report.previousUserSpeakingSeconds;
-  if (typeof previousSeconds !== "number") {
-    return base;
+  if (typeof speakingSeconds !== "number" || typeof previousSeconds !== "number") {
+    return null;
   }
 
   const diff = Math.round(speakingSeconds - previousSeconds);
   if (diff > 0) {
-    return `${base}，比上次多说了 ${formatDuration(diff)}`;
+    return `比上次多开口 ${formatDuration(diff)}。`;
   }
   if (diff < 0) {
-    return `${base}，这次少 ${formatDuration(Math.abs(diff))} 也没关系，先保持开口`;
+    return "这次说得少一点也没关系，先保持开口。";
   }
-  return `${base}，和上次一样稳定`;
+  return "和上次一样稳定开口。";
 }
 
-function CorrectionCard({ correction }: { correction: Correction }) {
-  const [expanded, setExpanded] = useState(false);
-  const severity = correction.severity ?? "important";
-  // redesign/session-review.html: "更好的表达" uses teal for the improved line
-  const correctedTone =
-    correction.type === "naturalness" || correction.type === "collocation"
-      ? "text-accent-teal"
-      : "text-text";
+function buildSummaryLine(report: ReportJSON, sentenceCount?: number): string {
+  const parts = [`${getCefrLevel(report.userLevel)}`, `聊了 ${formatDuration(report.durationSeconds)}`];
+  const sentenceValue = sentenceCount ?? report.userTurns;
+  if (typeof sentenceValue === "number") {
+    parts.push(`${Math.max(0, sentenceValue)} 句话`);
+  }
+  if (typeof report.userSpeakingSeconds === "number") {
+    parts.push(`开口 ${formatDuration(report.userSpeakingSeconds)}`);
+  }
 
+  return `${parts[0]}｜${parts.slice(1).join(" · ")}`;
+}
+
+function SectionHeading({
+  kicker,
+  title,
+  description,
+}: {
+  kicker?: string;
+  title: string;
+  description?: string;
+}) {
   return (
-    <button
-      type="button"
-      onClick={() => setExpanded((value) => !value)}
-      className="w-full text-left"
-    >
-      <Card
-        variant="default"
-        className="p-4 transition-colors duration-[160ms] hover:border-border-strong"
-      >
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge tone={severity === "critical" ? "accent" : "default"}>
-            {SEVERITY_LABEL[severity]}
-          </Badge>
-          {(correction.frequency ?? 1) > 1 ? (
-            <span className="text-xs text-text-muted">出现了 {correction.frequency} 次</span>
-          ) : null}
-        </div>
-        <p className="mt-3 text-[13.5px] text-text-muted line-through decoration-border-strong">
-          {correction.original}
-        </p>
-        <p className={`mt-1.5 text-[15px] font-semibold leading-snug ${correctedTone}`}>
-          {correction.corrected}
-        </p>
-        <span className="mt-2.5 inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-text-secondary">
-          为什么这样更好
-          <svg
-            width="12"
-            height="12"
-            viewBox="0 0 24 24"
-            fill="none"
-            aria-hidden="true"
-            className={`transition-transform duration-200 ${expanded ? "rotate-180" : ""}`}
-          >
-            <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </span>
-        {expanded ? (
-          <div className="mt-2 text-[13px] leading-[1.6] text-text-secondary">
-            <p>{correction.explanation}</p>
-            {correction.example ? (
-              <p className="mt-2 text-text-muted">例：{correction.example}</p>
-            ) : null}
-          </div>
-        ) : null}
-      </Card>
-    </button>
+    <div>
+      {kicker ? <p className="eyebrow text-accent-gold">{kicker}</p> : null}
+      <h3 className="mt-1 text-[20px] font-bold tracking-tight text-text">{title}</h3>
+      {description ? <p className="mt-1.5 text-sm leading-relaxed text-text-secondary">{description}</p> : null}
+    </div>
   );
 }
 
-function TodayFocusCard({ correction }: { correction: Correction }) {
-  const [expanded, setExpanded] = useState(false);
+function SummarySection({
+  report,
+  wordCount,
+  sentenceCount,
+}: {
+  report: ReportJSON;
+  wordCount?: number;
+  sentenceCount?: number;
+}) {
+  const levelInfo = getLevelInfo(getCefrLevel(report.userLevel));
+  const delta = buildSpeakingDelta(report);
 
   return (
-    <Card variant="inset" className="p-0">
-      <button
-        type="button"
-        onClick={() => setExpanded((value) => !value)}
-        className="w-full p-5 text-left"
-        aria-expanded={expanded}
-      >
-        <div className="flex items-center justify-between gap-3">
-          <p className="section-title !mb-0">今日重点</p>
-          <span className="inline-flex items-center gap-1 text-[12px] font-semibold text-text-secondary">
-            {expanded ? "收起说明" : "查看说明"}
-            <svg
-              width="12"
-              height="12"
-              viewBox="0 0 24 24"
-              fill="none"
-              aria-hidden="true"
-              className={`transition-transform duration-200 ${expanded ? "rotate-180" : ""}`}
-            >
-              <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </span>
-        </div>
-        <p className="mt-3 text-sm text-text-muted line-through decoration-border-strong">
-          {correction.original}
-        </p>
-        <p className="mt-1 text-[15px] font-semibold text-text">
-          {correction.corrected}
-        </p>
-        {expanded ? (
-          <div className="mt-3 rounded-[14px] bg-surface/70 p-3 text-[13px] leading-[1.6] text-text-secondary">
-            <p>{correction.explanation}</p>
-            {correction.example ? (
-              <p className="mt-2 text-text-muted">例：{correction.example}</p>
-            ) : null}
-          </div>
-        ) : null}
-      </button>
+    <Card variant="default" className="overflow-hidden border-spark-soft bg-gradient-to-br from-surface via-surface to-spark-soft/40 p-5 shadow-card">
+      <p className="text-sm font-medium text-text-muted">这次怎么样</p>
+      <p className="mt-2 text-[17px] font-bold leading-snug text-text">{buildSummaryLine(report, sentenceCount)}</p>
+      <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-text-secondary">
+        <Badge tone="spark">{levelInfo.shortLabel}</Badge>
+        {typeof wordCount === "number" ? <span>{Math.max(0, wordCount)} 个词</span> : null}
+        {delta ? <span>{delta}</span> : null}
+      </div>
     </Card>
   );
 }
 
-function GrowthSection({
-  growth,
-  onRepracticeExpressions,
-}: {
-  growth: ReportGrowth;
-  onRepracticeExpressions?: (expressions: GrowthNewExpression[]) => void;
-}) {
-  const hasAny =
-    growth.sayBetter.length > 0 ||
-    growth.newExpressions.length > 0 ||
-    growth.talkMore.length > 0 ||
-    Boolean(growth.focusNextTime);
-  if (!hasAny) {
+function progressStatusText(item: ReportReusedExpression): string {
+  if (item.statusAfter === "mastered") {
+    return `已复用 ${item.reuseCount} 次，基本掌握`;
+  }
+  if (item.statusAfter === "reviewing") {
+    return `已复用 ${item.reuseCount} 次，正在变熟`;
+  }
+  return `已复用 ${item.reuseCount} 次，继续练`;
+}
+
+function ProgressEvidenceSection({ items }: { items?: ReportReusedExpression[] }) {
+  if (!items?.length) {
     return null;
   }
 
+  const [first, ...rest] = items;
+
   return (
-    <div className="space-y-8">
-      <div>
-        <p className="eyebrow">口语提升包</p>
-        <p className="mt-1 text-xs text-text-muted">
-          {growth.topic
-            ? `围绕「${growth.topic}」，这些内容能让你下次说得更多、更好`
-            : "这些内容能让你下次说得更多、更好"}
-        </p>
+    <Card variant="default" className="border-accent-teal/20 bg-accent-teal/5 p-5">
+      <div className="flex items-start gap-3">
+        <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent-teal text-surface">
+          ✓
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold text-accent-teal">你把上次学的用出来了</p>
+          <p className="mt-2 text-[17px] font-semibold leading-snug text-text">“{first.currentText}”</p>
+          <p className="mt-1.5 text-sm leading-relaxed text-text-secondary">目标表达：{first.targetText}</p>
+          <p className="mt-2 text-xs font-semibold text-accent-teal">{progressStatusText(first)}</p>
+          {rest.length > 0 ? <p className="mt-2 text-xs text-text-muted">还有 {rest.length} 个表达也在变熟，放到更多小建议里。</p> : null}
+        </div>
       </div>
-
-      {growth.sayBetter.length > 0 ? (
-        <div>
-          <h3 className="text-[13px] font-semibold text-text-secondary">下次可以这样说</h3>
-          <p className="mt-0.5 text-xs text-text-muted">你说得没错，但可以更丰富——试着升级这些句子</p>
-          <ul className="mt-4 space-y-3">
-            {growth.sayBetter.map((item, index) => (
-              <li key={`say-better-${index}`}>
-                <Card variant="default" className="p-4">
-                  <p className="text-[13.5px] text-text-muted">你说的：{item.original}</p>
-                  <p className="mt-1.5 text-[15px] font-semibold leading-snug text-accent-teal">
-                    {item.upgraded}
-                  </p>
-                  {item.note ? (
-                    <p className="mt-2 text-[13px] leading-[1.6] text-text-secondary">{item.note}</p>
-                  ) : null}
-                </Card>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-
-      {growth.newExpressions.length > 0 ? (
-        <div>
-          <h3 className="text-[13px] font-semibold text-text-secondary">值得记下的新表达</h3>
-          <p className="mt-0.5 text-xs text-text-muted">跟这次话题直接相关的口语词块和句型</p>
-          <ul className="mt-4 space-y-3">
-            {growth.newExpressions.map((item, index) => (
-              <li key={`new-expression-${index}`}>
-                <Card variant="default" className="p-4">
-                  <p className="text-[15px] font-semibold leading-snug text-text">{item.phrase}</p>
-                  <p className="mt-1.5 text-[13px] leading-[1.6] text-text-secondary">{item.meaning}</p>
-                  {item.example ? (
-                    <p className="mt-2 text-[13px] leading-[1.6] text-text-muted">例：{item.example}</p>
-                  ) : null}
-                </Card>
-              </li>
-            ))}
-          </ul>
-          {onRepracticeExpressions ? (
-            <div className="mt-4">
-              <Button
-                type="button"
-                size="md"
-                onClick={() => onRepracticeExpressions(growth.newExpressions.slice(0, 3))}
-                className="w-full"
-              >
-                复练这些表达
-              </Button>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-
-      {growth.talkMore.length > 0 ? (
-        <div>
-          <h3 className="text-[13px] font-semibold text-text-secondary">这个话题还能聊什么</h3>
-          <p className="mt-0.5 text-xs text-text-muted">下次可以展开的角度，起手句直接照着说就行</p>
-          <ul className="mt-4 space-y-3">
-            {growth.talkMore.map((item, index) => (
-              <li key={`talk-more-${index}`}>
-                <Card variant="default" className="p-4">
-                  <p className="text-[13.5px] font-medium text-text">{item.angle}</p>
-                  <p className="mt-1.5 text-[14px] leading-snug text-accent-teal">“{item.starter}”</p>
-                </Card>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-
-      {growth.focusNextTime ? (
-        <div>
-          <h3 className="text-[13px] font-semibold text-text-secondary">下次带走这一句</h3>
-          <p className="mt-0.5 text-xs text-text-muted">别贪多，先把这一个用出来就赢了</p>
-          <Card variant="default" className="mt-4 border border-accent-teal/40 bg-accent-teal/5 p-4">
-            <p className="text-[16px] font-semibold leading-snug text-accent-teal">
-              {growth.focusNextTime.phrase}
-            </p>
-            {growth.focusNextTime.why ? (
-              <p className="mt-1.5 text-[13px] leading-[1.6] text-text-secondary">
-                {growth.focusNextTime.why}
-              </p>
-            ) : null}
-            <p className="mt-3 text-[13.5px] leading-[1.6] text-text">
-              {growth.focusNextTime.hookLine}
-            </p>
-          </Card>
-        </div>
-      ) : null}
-    </div>
+    </Card>
   );
 }
 
-function ReusedExpressionsSection({ items }: { items: ReportReusedExpression[] }) {
-  if (items.length === 0) {
-    return null;
+function CoreExpressionSection({
+  report,
+  shortReport,
+}: {
+  report: ReportJSON;
+  shortReport: boolean;
+}) {
+  const core = pickCoreExpression(report);
+  const showOriginal = core.original && !isSameExpression(core.original, core.improved);
+
+  return (
+    <Card variant="elevated" className="p-5">
+      <SectionHeading
+        kicker="Core"
+        title="先带走这一句"
+        description={
+          shortReport
+            ? "这次内容很短，不硬拆报告。先把这一句练熟就够了。"
+            : "别贪多，这次优先把这一个表达变成下次能说出口的话。"
+        }
+      />
+
+      <div className="mt-5 rounded-[22px] bg-text p-5 text-surface">
+        <p className="text-xs font-semibold text-accent-gold-on-canvas">推荐说法</p>
+        <p className="mt-2 text-[24px] font-bold leading-tight tracking-tight">{core.improved}</p>
+      </div>
+
+      {showOriginal ? (
+        <div className="mt-4 rounded-2xl bg-bg-warm/70 p-4">
+          <p className="text-xs font-semibold text-text-muted">你刚才说</p>
+          <p className="mt-1 text-sm text-text-muted line-through decoration-border-strong">{core.original}</p>
+        </div>
+      ) : null}
+
+      <div className="mt-4 rounded-2xl bg-spark-soft/70 p-4">
+        <p className="text-sm font-semibold text-text">为什么这样更好？</p>
+        <p className="mt-2 text-sm leading-relaxed text-text-secondary">{core.why}</p>
+      </div>
+
+      {core.example ? (
+        <div className="mt-4 rounded-2xl border border-border-subtle bg-surface p-4">
+          <p className="text-sm font-semibold text-text">下次可以直接这样用</p>
+          <p className="mt-2 text-sm leading-relaxed text-text-secondary">“{core.example}”</p>
+        </div>
+      ) : null}
+
+      <p className="mt-4 text-sm leading-relaxed text-text-secondary">{core.hookLine}</p>
+    </Card>
+  );
+}
+
+function isCoveredByCore(value: string | undefined, core: CoreExpression): boolean {
+  return (
+    isRelatedExpression(value, core.improved) ||
+    isRelatedExpression(value, core.original) ||
+    isRelatedExpression(value, core.relatedCorrection?.corrected) ||
+    isRelatedExpression(value, core.relatedCorrection?.original)
+  );
+}
+
+function pickNextExpressions(report: ReportJSON, shortReport: boolean) {
+  const growth = getGrowth(report);
+  const core = pickCoreExpression(report);
+  if (!growth) {
+    return {
+      expressions: [] as GrowthNewExpression[],
+      upgrades: [] as ReportGrowth["sayBetter"],
+      talkMore: [] as GrowthTalkMore[],
+    };
+  }
+
+  const maxExpressionCount = shortReport ? 1 : 2;
+  const expressions = growth.newExpressions
+    .filter((item) => !isCoveredByCore(item.phrase, core))
+    .slice(0, maxExpressionCount);
+  const upgrades = growth.sayBetter
+    .filter((item) => !isCoveredByCore(item.original, core) && !isCoveredByCore(item.upgraded, core))
+    .slice(0, shortReport ? 0 : 1);
+  const talkMore = growth.talkMore.slice(0, shortReport ? 0 : 1);
+
+  return { expressions, upgrades, talkMore };
+}
+
+function NextStepSection({
+  report,
+  shortReport,
+  onRepracticeExpressions,
+}: {
+  report: ReportJSON;
+  shortReport: boolean;
+  onRepracticeExpressions?: (expressions: GrowthNewExpression[]) => void;
+}) {
+  const { expressions, upgrades, talkMore } = pickNextExpressions(report, shortReport);
+  const hasAny = expressions.length > 0 || upgrades.length > 0 || talkMore.length > 0;
+
+  if (!hasAny) {
+    return (
+      <Card variant="default" className="p-5">
+        <SectionHeading
+          kicker="Next"
+          title="下次接着说"
+          description="这次信息量不多，先给你一个最容易复用的表达。"
+        />
+        <div className="mt-4 rounded-2xl bg-bg-warm/70 p-4">
+          <p className="text-[16px] font-semibold text-text">Could you give me an example?</p>
+          <p className="mt-1.5 text-sm leading-relaxed text-text-secondary">想让对方多解释一点时，可以直接用。</p>
+        </div>
+      </Card>
+    );
   }
 
   return (
-    <div>
-      <p className="eyebrow">你把上次学的用出来了</p>
-      <ul className="mt-4 space-y-3">
-        {items.map((item) => (
-          <li key={item.expressionId}>
-            <Card variant="default" className="p-4">
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge tone={item.statusAfter === "mastered" ? "accent" : "default"}>
-                  {item.statusAfter === "mastered" ? "已掌握" : `已复用 ${item.reuseCount} 次`}
-                </Badge>
-              </div>
-              <p className="mt-3 text-[13.5px] text-text-muted">
-                上次：{item.previousOriginalText || item.targetText}
-              </p>
-              <p className="mt-1.5 text-[15px] font-semibold leading-snug text-accent-teal">
-                这次：{item.currentText}
-              </p>
-              {item.previousOriginalText && item.previousOriginalText !== item.targetText ? (
-                <p className="mt-2 text-[13px] leading-[1.6] text-text-secondary">
-                  目标表达：{item.targetText}
-                </p>
-              ) : null}
-            </Card>
-          </li>
+    <Card variant="default" className="p-5">
+      <SectionHeading
+        kicker="Next"
+        title="下次接着说"
+        description={shortReport ? "只留 1 个能马上复用的表达。" : "只留 2–3 个能复用的，不把你淹没在建议里。"}
+      />
+
+      <div className="mt-5 space-y-3">
+        {expressions.map((item) => (
+          <div key={item.phrase} className="rounded-2xl bg-bg-warm/70 p-4">
+            <p className="text-[16px] font-semibold leading-snug text-text">{item.phrase}</p>
+            <p className="mt-1.5 text-sm leading-relaxed text-text-secondary">{item.meaning}</p>
+            {item.example ? <p className="mt-2 text-sm leading-relaxed text-text">“{item.example}”</p> : null}
+          </div>
         ))}
-      </ul>
-    </div>
+
+        {upgrades.map((item) => (
+          <div key={item.upgraded} className="rounded-2xl bg-spark-soft/55 p-4">
+            <p className="text-xs font-semibold text-accent-gold">可以把原句升级成</p>
+            <p className="mt-1.5 text-[16px] font-semibold leading-snug text-text">{item.upgraded}</p>
+            {item.note ? <p className="mt-1.5 text-sm leading-relaxed text-text-secondary">{item.note}</p> : null}
+          </div>
+        ))}
+
+        {talkMore.map((item) => (
+          <div key={`${item.angle}-${item.starter}`} className="rounded-2xl border border-dashed border-spark/35 bg-surface p-4">
+            <p className="text-sm font-semibold text-text">下次可以多聊一点：{item.angle}</p>
+            <p className="mt-2 text-sm leading-relaxed text-text-secondary">“{item.starter}”</p>
+          </div>
+        ))}
+      </div>
+
+      {onRepracticeExpressions && expressions.length > 0 ? (
+        <Button type="button" size="md" fullWidth onClick={() => onRepracticeExpressions(expressions)} className="mt-4">
+          复练这些表达
+        </Button>
+      ) : null}
+    </Card>
+  );
+}
+
+const TASK_STATUS_LABEL: Record<TaskGoalStatus, string> = {
+  done: "达成",
+  partial: "部分达成",
+  missed: "未达成",
+};
+
+function MoreSuggestions({
+  report,
+  wordCount,
+  sentenceCount,
+  taskGoals,
+}: {
+  report: ReportJSON;
+  wordCount?: number;
+  sentenceCount?: number;
+  taskGoals?: TaskGoal[];
+}) {
+  const growth = getGrowth(report);
+  const core = pickCoreExpression(report);
+  const { expressions, upgrades, talkMore } = pickNextExpressions(report, false);
+  const levelInfo = getLevelInfo(getCefrLevel(report.userLevel));
+
+  const remainingCorrections = report.corrections.filter(
+    (item) => !isCoveredByCore(item.original, core) && !isCoveredByCore(item.corrected, core),
+  );
+  const visibleExpressionPhrases = new Set(expressions.map((item) => compactText(item.phrase)));
+  const remainingExpressions =
+    growth?.newExpressions.filter(
+      (item) => !isCoveredByCore(item.phrase, core) && !visibleExpressionPhrases.has(compactText(item.phrase)),
+    ) ?? [];
+  const visibleUpgradeTexts = new Set(upgrades.map((item) => compactText(item.upgraded)));
+  const remainingUpgrades =
+    growth?.sayBetter.filter(
+      (item) =>
+        !isCoveredByCore(item.original, core) &&
+        !isCoveredByCore(item.upgraded, core) &&
+        !visibleUpgradeTexts.has(compactText(item.upgraded)),
+    ) ?? [];
+  const visibleTalkMoreTexts = new Set(talkMore.map((item) => compactText(item.starter)));
+  const remainingTalkMore =
+    growth?.talkMore.filter((item) => !visibleTalkMoreTexts.has(compactText(item.starter))) ?? [];
+  const remainingReused = report.reusedExpressions?.slice(1) ?? [];
+  const taskResults = report.taskResults ?? [];
+  const total =
+    remainingCorrections.length +
+    remainingExpressions.length +
+    remainingUpgrades.length +
+    remainingTalkMore.length +
+    remainingReused.length +
+    taskResults.length +
+    1;
+
+  if (total <= 1 && typeof wordCount !== "number" && typeof sentenceCount !== "number") {
+    return null;
+  }
+
+  const goalDescById = Object.fromEntries((taskGoals ?? []).map((goal) => [goal.id, goal.desc]));
+
+  return (
+    <details className="group rounded-[var(--radius-card)] border border-border bg-surface p-5">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-4">
+        <div>
+          <p className="text-[16px] font-bold text-text">更多小建议</p>
+          <p className="mt-1 text-sm text-text-muted">等级说明、数据明细和剩余建议，想细看再打开。</p>
+        </div>
+        <span className="rounded-full bg-bg-warm px-3 py-1 text-xs font-semibold text-text-secondary group-open:hidden">展开</span>
+        <span className="hidden rounded-full bg-bg-warm px-3 py-1 text-xs font-semibold text-text-secondary group-open:inline">收起</span>
+      </summary>
+
+      <div className="mt-5 space-y-3">
+        <div className="rounded-2xl bg-bg-warm/70 p-4 text-sm leading-relaxed text-text-secondary">
+          <p className="font-semibold text-text">{getCefrLevel(report.userLevel)} · {levelInfo.shortLabel}</p>
+          <p className="mt-1">{levelInfo.ability}</p>
+          <p className="mt-2 text-xs text-text-muted">
+            数据：{formatDuration(report.durationSeconds)}
+            {typeof report.userSpeakingSeconds === "number" ? ` · 开口 ${formatDuration(report.userSpeakingSeconds)}` : ""}
+            {typeof wordCount === "number" ? ` · ${wordCount} 个词` : ""}
+            {typeof sentenceCount === "number" ? ` · ${sentenceCount} 句话` : ""}
+          </p>
+        </div>
+
+        {remainingReused.map((item) => (
+          <div key={`${item.targetText}-${item.currentText}`} className="rounded-2xl bg-accent-teal/5 p-4">
+            <p className="text-xs font-semibold text-accent-teal">复用证据</p>
+            <p className="mt-1.5 text-sm font-semibold text-text">“{item.currentText}”</p>
+            <p className="mt-1 text-xs text-text-secondary">{progressStatusText(item)}</p>
+          </div>
+        ))}
+
+        {remainingCorrections.map((item, index) => (
+          <div key={`${item.type}-${item.corrected}-${index}`} className="rounded-2xl bg-bg-warm/70 p-4">
+            <p className="text-xs font-semibold text-text-muted">小修改</p>
+            <p className="mt-1 text-sm text-text-muted line-through decoration-border-strong">{item.original}</p>
+            <p className="mt-1 text-sm font-semibold text-text">{item.corrected}</p>
+            <p className="mt-2 text-sm leading-relaxed text-text-secondary">{item.explanation}</p>
+          </div>
+        ))}
+
+        {remainingUpgrades.map((item) => (
+          <div key={item.upgraded} className="rounded-2xl bg-bg-warm/70 p-4">
+            <p className="text-xs font-semibold text-text-muted">表达升级</p>
+            <p className="mt-1.5 text-sm font-semibold text-text">{item.upgraded}</p>
+            <p className="mt-1 text-sm leading-relaxed text-text-secondary">{item.note}</p>
+          </div>
+        ))}
+
+        {remainingExpressions.map((item) => (
+          <div key={item.phrase} className="rounded-2xl bg-bg-warm/70 p-4">
+            <p className="text-xs font-semibold text-text-muted">补充表达</p>
+            <p className="mt-1.5 text-sm font-semibold text-text">{item.phrase}</p>
+            <p className="mt-1 text-sm leading-relaxed text-text-secondary">{item.meaning}</p>
+          </div>
+        ))}
+
+        {remainingTalkMore.map((item) => (
+          <div key={`${item.angle}-${item.starter}`} className="rounded-2xl bg-bg-warm/70 p-4">
+            <p className="text-xs font-semibold text-text-muted">延展话题</p>
+            <p className="mt-1.5 text-sm font-semibold text-text">{item.angle}</p>
+            <p className="mt-1 text-sm leading-relaxed text-text-secondary">“{item.starter}”</p>
+          </div>
+        ))}
+
+        {taskResults.map((result) => (
+          <div key={result.goalId} className="rounded-2xl bg-bg-warm/70 p-4">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-sm font-semibold text-text">{goalDescById[result.goalId] ?? result.goalId}</p>
+              <Badge tone={result.status === "done" ? "accent" : "default"}>{TASK_STATUS_LABEL[result.status]}</Badge>
+            </div>
+            <p className="mt-2 text-sm leading-relaxed text-text-secondary">{result.reason}</p>
+          </div>
+        ))}
+      </div>
+    </details>
   );
 }
 
@@ -439,94 +562,36 @@ export function ReportView({
     return null;
   }
 
-  const grouped = DIMENSION_ORDER.map((type) => ({
-    type,
-    meta: DIMENSION_META[type],
-    items: report.corrections.filter((item) => item.type === type),
-  })).filter((section) => section.items.length > 0);
-
-  const topCorrection = report.corrections[0] ?? null;
-  const currentLevel = getCefrLevel(report.userLevel);
-  const currentLevelInfo = getLevelInfo(currentLevel);
+  const shortReport = !hasEnoughContent(report, wordCount, sentenceCount);
 
   return (
-    <section className="animate-fade-up space-y-7 py-2">
-      <header>
-        <p className="eyebrow">点评报告</p>
-        <div className="mt-2.5 flex items-baseline gap-2.5">
-          <h2 className="text-[clamp(34px,4vw,46px)] font-bold tracking-tight text-accent-gold">
-            {currentLevel}
-          </h2>
-          <span className="text-sm font-semibold text-text-secondary">本次口语水平</span>
-        </div>
-        <p className="mt-2.5 max-w-[48ch] text-sm leading-relaxed text-text-secondary">
-          {currentLevelInfo.shortLabel} · {currentLevelInfo.ability}
-          <br />
-          {report.corrections.length > 0
-            ? `这次一共整理了 ${report.corrections.length} 条建议，先看「今日重点」，再逐条展开。`
-            : "这次几乎没什么要改的，保持这个状态继续练。"}
+    <section className="animate-fade-up space-y-4 py-2">
+      <header className="pb-1">
+        <p className="eyebrow">Speaking Review</p>
+        <h2 className="mt-2 text-[28px] font-black tracking-tight text-text">这次复盘</h2>
+        <p className="mt-1.5 max-w-[44ch] text-sm leading-relaxed text-text-secondary">
+          不追求满屏建议。今天先带走一个能用出来的表达。
         </p>
       </header>
 
-      <LevelSystemCard
-        userLevel={report.userLevel}
-        title="这次等级在体系里的位置"
-        note="本次练习估算"
+      <SummarySection report={report} wordCount={wordCount} sentenceCount={sentenceCount} />
+      <ProgressEvidenceSection items={report.reusedExpressions} />
+      <CoreExpressionSection report={report} shortReport={shortReport} />
+      <NextStepSection
+        report={report}
+        shortReport={shortReport}
+        onRepracticeExpressions={onRepracticeExpressions}
+      />
+      <MoreSuggestions
+        report={report}
+        wordCount={wordCount}
+        sentenceCount={sentenceCount}
+        taskGoals={taskGoals}
       />
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <StatCard label="时长" value={formatDuration(report.durationSeconds)} />
-        <StatCard
-          label="本次开口"
-          value={
-            typeof report.userSpeakingSeconds === "number"
-              ? formatDuration(Math.max(0, report.userSpeakingSeconds))
-              : "—"
-          }
-          note={buildSpeakingStatNote(report)}
-        />
-        <StatCard label="词数" value={wordCount != null ? String(wordCount) : "—"} />
-        <StatCard label="句数" value={sentenceCount != null ? String(sentenceCount) : "—"} />
-      </div>
-
-      {taskGoals && taskGoals.length > 0 ? (
-        <TaskResultsSection report={report} taskGoals={taskGoals} />
-      ) : null}
-
-      {topCorrection ? <TodayFocusCard correction={topCorrection} /> : null}
-
-      {report.reusedExpressions?.length ? (
-        <ReusedExpressionsSection items={report.reusedExpressions} />
-      ) : null}
-
-      {report.growth ? (
-        <GrowthSection
-          growth={report.growth}
-          onRepracticeExpressions={onRepracticeExpressions}
-        />
-      ) : null}
-
-      {grouped.length > 0 ? (
-        <div className="space-y-8">
-          {grouped.map((section) => (
-            <div key={section.type}>
-              <h3 className="text-[13px] font-semibold text-text-secondary">{section.meta.label}</h3>
-              <p className="mt-0.5 text-xs text-text-muted">{section.meta.description}</p>
-              <ul className="mt-4 space-y-3">
-                {section.items.map((correction, index) => (
-                  <li key={`${section.type}-${index}`}>
-                    <CorrectionCard correction={correction} />
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <Card variant="ghost" className="p-6 text-center text-sm text-text-muted">
-          这次几乎没什么要改的，说得挺自然
-        </Card>
-      )}
+      <p className="px-4 pt-1 text-center text-xs leading-relaxed text-text-muted">
+        练口语不是一次学很多，而是下次真的多说一句。
+      </p>
     </section>
   );
 }
