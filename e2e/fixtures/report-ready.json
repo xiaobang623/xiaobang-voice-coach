@@ -1,0 +1,59 @@
+{
+  "sessionId": "e2e-report-ready",
+  "createdAt": "2026-07-24T12:00:00.000Z",
+  "durationSeconds": 90,
+  "userSpeakingSeconds": 18,
+  "userTurns": 1,
+  "previousUserSpeakingSeconds": 12,
+  "userLevel": "intermediate",
+  "corrections": [
+    {
+      "original": "I very like coffee",
+      "corrected": "I really like coffee",
+      "type": "collocation",
+      "severity": "important",
+      "frequency": 1,
+      "explanation": "英语里更自然的搭配是 really like。",
+      "example": "I really like iced lattes."
+    }
+  ],
+  "growth": {
+    "topic": "daily",
+    "sayBetter": [
+      {
+        "original": "Today is busy.",
+        "upgraded": "Today has been pretty busy.",
+        "note": "用 has been 更像在描述今天持续到现在的状态。"
+      }
+    ],
+    "newExpressions": [
+      {
+        "phrase": "I ended up...",
+        "meaning": "结果我最后……",
+        "example": "I ended up working late."
+      }
+    ],
+    "talkMore": [
+      {
+        "angle": "补充一个具体细节",
+        "starter": "The tricky part was..."
+      }
+    ],
+    "focusNextTime": {
+      "phrase": "I ended up...",
+      "why": "适合讲结果和变化。",
+      "hookLine": "下次试着把它自然接进自己的经历里。"
+    }
+  },
+  "reusedExpressions": [
+    {
+      "expressionId": "expr-1",
+      "previousOriginalText": "I very like coffee",
+      "targetText": "I really like coffee",
+      "currentText": "I really like my new routine.",
+      "statusBefore": "reviewing",
+      "statusAfter": "mastered",
+      "reuseCount": 2
+    }
+  ]
+}

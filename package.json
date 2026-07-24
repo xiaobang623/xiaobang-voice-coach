@@ -18,7 +18,9 @@
     "evals:smoke": "node evals/run.mjs --smoke",
     "evals:report": "node evals/run.mjs --suite report",
     "evals:memory": "node evals/run.mjs --suite memory",
-    "evals:directions": "node evals/run.mjs --suite directions"
+    "evals:directions": "node evals/run.mjs --suite directions",
+    "e2e": "playwright test",
+    "e2e:ui": "playwright test --ui"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.110.0",
@@ -30,6 +32,7 @@
     "ws": "^8.21.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@tailwindcss/vite": "^4.3.2",
     "@types/node": "^26.1.1",
     "@types/react": "^19.2.17",

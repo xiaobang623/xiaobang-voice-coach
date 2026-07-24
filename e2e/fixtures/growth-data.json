@@ -1,0 +1,100 @@
+{
+  "stats": {
+    "sessionCount": 3,
+    "totalDurationSeconds": 780,
+    "weekSpeakingSeconds": 240,
+    "currentStreakDays": 2,
+    "longestStreakDays": 4,
+    "latestUserLevel": "intermediate",
+    "frequentMistakes": [
+      {
+        "original": "I very like coffee",
+        "corrected": "I really like coffee",
+        "type": "collocation",
+        "count": 2
+      }
+    ]
+  },
+  "history": [
+    {
+      "sessionId": "hist-1",
+      "createdAt": "2026-07-24T10:30:00.000Z",
+      "topic": "daily",
+      "durationSeconds": 180,
+      "userSpeakingSeconds": 60,
+      "userTurns": 4,
+      "userLevel": "intermediate",
+      "correctionCount": 1
+    },
+    {
+      "sessionId": "hist-2",
+      "createdAt": "2026-07-23T10:30:00.000Z",
+      "topic": "food",
+      "durationSeconds": 240,
+      "userSpeakingSeconds": 90,
+      "userTurns": 5,
+      "userLevel": "beginner",
+      "correctionCount": 2
+    }
+  ],
+  "trackedExpressions": [
+    {
+      "id": "expr-1",
+      "sourceType": "correction",
+      "originalText": "I very like coffee",
+      "targetText": "I really like coffee",
+      "category": "搭配",
+      "status": "unmastered",
+      "firstSeenAt": "2026-07-20T10:00:00.000Z",
+      "lastSeenAt": "2026-07-24T10:00:00.000Z",
+      "reuseCount": 0
+    },
+    {
+      "id": "expr-2",
+      "sourceType": "newExpression",
+      "originalText": "",
+      "targetText": "I ended up...",
+      "category": "叙事",
+      "status": "reviewing",
+      "firstSeenAt": "2026-07-21T10:00:00.000Z",
+      "lastSeenAt": "2026-07-24T10:00:00.000Z",
+      "reuseCount": 1
+    },
+    {
+      "id": "expr-3",
+      "sourceType": "sayBetter",
+      "originalText": "Today is busy.",
+      "targetText": "Today has been pretty busy.",
+      "category": "时态",
+      "status": "mastered",
+      "firstSeenAt": "2026-07-22T10:00:00.000Z",
+      "lastSeenAt": "2026-07-24T10:00:00.000Z",
+      "reuseCount": 2
+    }
+  ],
+  "memory": {
+    "summary": {
+      "userLevel": "intermediate",
+      "topics": ["work", "coffee"],
+      "frequentMistakes": ["collocation: very like → really like"],
+      "trackedExpressions": [],
+      "personalFacts": ["Works as a product manager", "Is preparing for IELTS"],
+      "coachNotes": "Prefers practical workplace topics.",
+      "updatedAt": "2026-07-24T10:00:00.000Z"
+    },
+    "entries": [
+      {
+        "sessionId": "hist-1",
+        "topic": "daily",
+        "highlights": "Spoke about a busy day.",
+        "mistakes": "very like",
+        "storyNotes": "Had a long product meeting today.",
+        "createdAt": "2026-07-24T10:30:00.000Z"
+      }
+    ]
+  },
+  "topicCounts": {
+    "daily": 3,
+    "food": 1
+  }
+}

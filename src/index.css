@@ -140,6 +140,55 @@ body,
   margin: 0 0 12px;
 }
 
+.free-talk-hero__mascot {
+  right: -0.75rem;
+  bottom: -0.55rem;
+  transform: scale(0.74);
+  transform-origin: right bottom;
+}
+
+.free-talk-hero__title {
+  max-width: min(100%, calc(100% - 6.75rem));
+}
+
+.free-talk-hero__copy {
+  max-width: min(42ch, calc(100% - 8rem));
+  padding-right: 0;
+}
+
+@media (min-width: 390px) {
+  .free-talk-hero__mascot {
+    right: -0.25rem;
+    bottom: -0.65rem;
+    transform: scale(0.82);
+  }
+
+  .free-talk-hero__title {
+    max-width: min(100%, calc(100% - 7.5rem));
+  }
+
+  .free-talk-hero__copy {
+    max-width: min(42ch, calc(100% - 8.75rem));
+  }
+}
+
+@media (min-width: 640px) {
+  .free-talk-hero__mascot {
+    right: 1.75rem;
+    bottom: -0.75rem;
+    transform: scale(1.1);
+  }
+
+  .free-talk-hero__title {
+    max-width: 60%;
+  }
+
+  .free-talk-hero__copy {
+    max-width: 42ch;
+    padding-right: 5rem;
+  }
+}
+
 .app-top-bar {
   padding-top: max(0.75rem, env(safe-area-inset-top));
 }

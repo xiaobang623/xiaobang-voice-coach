@@ -22,3 +22,13 @@
 2. 改 `src/**` → Vite HMR 自动生效，不重启；改 `backend/server.js` / `proxy.js` / `dev-api-server.js` / `report-server.js` → 重启对应端口服务
 3. 冒烟验证后给用户链接：练习页 http://localhost:5173/ · 管理后台 http://localhost:5173/admin/login
 4. 注明这次验证应该看什么
+
+## UI / 响应式设计约定
+
+以后新增或修改任何前端 UI，默认必须一起覆盖窄屏样式，不需要用户额外提醒：
+
+- 至少检查 `320px / 375px / 430px / 768px / 1024px` 五档宽度。
+- 绝对定位装饰图（尤其 `Mascot` / 插画 / 浮层）必须有独立的移动端尺寸、位置和文字安全区，不能遮挡主标题、说明文案、按钮或可点击区域。
+- 首页、对话页、报告页等主流程组件优先 mobile-first 写法，再逐级放大到平板和桌面。
+- 改视觉时优先复用现有 design tokens、`Card` / `Button` / `Mascot` / `eyebrow` / `section-title`，不要自造一套视觉语言。
+- UI 改动完成后，除了 `npm run build` / `npm run evals:smoke`，还要说明已覆盖哪些关键屏宽；能本地截图/浏览器验证时优先做。

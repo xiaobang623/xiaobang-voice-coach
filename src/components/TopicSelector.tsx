@@ -161,15 +161,15 @@ export function TopicSelector({
         <button
           type="button"
           onClick={onFreeTalk}
-          className="relative block w-full min-h-[230px] overflow-hidden rounded-[24px] bg-ink px-[clamp(28px,4vw,44px)] pb-[clamp(30px,4vw,42px)] pt-[clamp(34px,4vw,52px)] text-left md:min-h-[270px]"
+          className="free-talk-hero relative block w-full min-h-[230px] overflow-hidden rounded-[24px] bg-ink px-[clamp(28px,4vw,44px)] pb-[clamp(30px,4vw,42px)] pt-[clamp(34px,4vw,52px)] text-left md:min-h-[270px]"
         >
           <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(160px_160px_at_88%_-10%,rgba(166,129,63,0.32),transparent_70%)]" />
-          <div className="pointer-events-none absolute -bottom-3 right-4 z-0 sm:right-7">
+          <div className="free-talk-hero__mascot pointer-events-none absolute z-0">
             <Mascot
               expression="happy"
               fullBody
               size={150}
-              className="drop-shadow-[0_16px_28px_rgba(0,0,0,0.2)] sm:[transform:scale(1.1)]"
+              className="drop-shadow-[0_16px_28px_rgba(0,0,0,0.2)]"
             />
           </div>
           <div className="relative flex items-center justify-between">
@@ -178,10 +178,10 @@ export function TopicSelector({
               <CircleMicIcon className="h-5 w-5 text-ink-on-canvas" />
             </div>
           </div>
-          <h2 className="relative z-10 mt-9 max-w-[60%] text-[clamp(28px,3vw,34px)] font-semibold tracking-tight text-ink-on-canvas md:mt-[54px]">
+          <h2 className="free-talk-hero__title relative z-10 mt-9 text-[clamp(28px,3vw,34px)] font-semibold tracking-tight text-ink-on-canvas md:mt-[54px]">
             开始对话
           </h2>
-          <p className="relative z-10 mt-2.5 max-w-[42ch] pr-20 text-[15px] leading-relaxed text-ink-on-canvas/60">
+          <p className="free-talk-hero__copy relative z-10 mt-2.5 text-[15px] leading-relaxed text-ink-on-canvas/60">
             从熟悉的话题开始，AI 全程不打断，说完再一起复盘
           </p>
         </button>
