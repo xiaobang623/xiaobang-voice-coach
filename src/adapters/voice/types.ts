@@ -12,6 +12,8 @@ export interface VoiceModelOverrides {
 export interface VoiceConfig {
   sessionId: string;
   token: string;
+  /** Short-lived signed proxy-auth token from /api/issue-voice-token. */
+  voiceToken?: string;
   userId?: string;
   guestId?: string;
   language?: string;

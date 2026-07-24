@@ -213,6 +213,9 @@ export class DoubaoVoiceAdapter implements VoiceAdapter {
       if (config.sessionId) {
         url.searchParams.set("sessionId", config.sessionId);
       }
+      if (config.voiceToken) {
+        url.searchParams.set("vt", config.voiceToken);
+      }
       return url.toString();
     } catch {
       return WS_URL;

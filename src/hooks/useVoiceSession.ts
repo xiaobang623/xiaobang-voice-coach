@@ -4,6 +4,8 @@ import { DoubaoVoiceAdapter } from "../adapters/voice/doubao";
 import { SelfHostedVoiceAdapter } from "../adapters/voice/selfhosted";
 import type { BotMessageEvent, TranscriptEvent, VoiceAdapter, VoiceModelOverrides } from "../adapters/voice/types";
 import { TtsPcmPlayer, type TtsPlayerTuning } from "./ttsPcmPlayer";
+import { trackEvent } from "../core/analytics";
+import { issueVoiceToken } from "../core/quota";
 
 export type VoiceSessionStatus = "connecting" | "active" | "ended";
 
@@ -226,11 +228,12 @@ export function useVoiceSession(): UseVoiceSessionResult {
   const [hint, setHint] = useState<string | null>(null);
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [conversationStartedAt, setConversationStartedAt] = useState<number | null>(null);
-  const [activeBackend, setActiveBackend] = useState<VoiceBackend | null>(null);
+  const [activeBackend, setActiveBackendState] = useState<VoiceBackend | null>(null);
   const [activeAsrProvider, setActiveAsrProvider] = useState<ActiveAsrProvider>(null);
   const [userSpeakingAudioSeconds, setUserSpeakingAudioSeconds] = useState(0);
 
   const hintTimerRef = useRef<number | null>(null);
+  const activeBackendRef = useRef<VoiceBackend | null>(null);
   const statusRef = useRef<VoiceSessionStatus>("ended");
   const inputEnabledRef = useRef(true);
   const adapterRef = useRef<VoiceAdapter | null>(null);
@@ -281,6 +284,11 @@ export function useVoiceSession(): UseVoiceSessionResult {
 
   const userSpeakingSeconds =
     userSpeakingAudioSeconds > 0 ? userSpeakingAudioSeconds : estimatedSpeakingSeconds;
+
+  const setActiveBackend = useCallback((backend: VoiceBackend | null) => {
+    activeBackendRef.current = backend;
+    setActiveBackendState(backend);
+  }, []);
 
   const publishSpeakingAudioSeconds = useCallback(() => {
     const nextSeconds = Math.round(speakingAudioSecondsRef.current);
@@ -834,6 +842,15 @@ export function useVoiceSession(): UseVoiceSessionResult {
       adapter.on("error", (payload) => {
         const error = payload as Error;
         const isIdleTimeout = error.message.includes("DialogAudioIdleTimeout");
+        trackEvent("voice_error", {
+          userId: options?.userId ?? null,
+          guestId: options?.guestId ?? null,
+          sessionId: adapterSessionId,
+          props: {
+            phase: statusRef.current === "connecting" ? "connect" : "mid",
+            provider: resolved.backend,
+          },
+        });
         setErrorMessage(
           isIdleTimeout
             ? "好久没听到声音，语音先暂停啦。再点一下麦克风就能继续聊～"
@@ -842,9 +859,34 @@ export function useVoiceSession(): UseVoiceSessionResult {
         teardownConnection();
       });
 
+      // 连语音代理前换鉴权 token（proxy 侧强制校验，堵烧钱洞）+ 再查一次额度。
+      const voiceAuth = await issueVoiceToken({
+        userId: options?.userId ?? null,
+        guestId: options?.guestId ?? null,
+        sessionId: adapterSessionId,
+      });
+      if (!voiceAuth.allowed) {
+        if (voiceAuth.actor === "guest") {
+          trackEvent("quota_hit", {
+            userId: null,
+            guestId: options?.guestId ?? null,
+            sessionId: adapterSessionId,
+            props: { scope: "guest" },
+          });
+        }
+        setErrorMessage(
+          voiceAuth.actor === "user"
+            ? "今天的练习次数用完啦，明天再来继续哦～"
+            : `游客每天可以免费练 ${voiceAuth.limit ?? 3} 次，今天的次数用完啦。注册后可以继续练习～`,
+        );
+        teardownConnection();
+        return;
+      }
+
       await adapter.connect({
         sessionId: adapterSessionId,
         token: "",
+        voiceToken: voiceAuth.token ?? undefined,
         userId: options?.userId ?? undefined,
         guestId: options?.guestId ?? undefined,
         voiceType: options?.voiceType,
@@ -1045,8 +1087,20 @@ export function useVoiceSession(): UseVoiceSessionResult {
       setStatus("active");
       sayInitialGreeting(options?.initialGreeting);
     } catch (error) {
+      const isMicPermissionDenied = error instanceof DOMException && error.name === "NotAllowedError";
+      if (!isMicPermissionDenied) {
+        trackEvent("voice_error", {
+          userId: options?.userId ?? null,
+          guestId: options?.guestId ?? null,
+          sessionId: options?.sessionId ?? null,
+          props: {
+            phase: statusRef.current === "active" ? "mid" : "connect",
+            provider: activeBackendRef.current ?? "doubao",
+          },
+        });
+      }
       teardownConnection();
-      if (error instanceof DOMException && error.name === "NotAllowedError") {
+      if (isMicPermissionDenied) {
         setErrorMessage("麦克风权限没开，请在浏览器地址栏左侧允许麦克风访问。");
         return;
       }

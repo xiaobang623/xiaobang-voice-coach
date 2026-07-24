@@ -11,6 +11,9 @@
  */
 
 export const DEFAULT_GUEST_DAILY_SESSION_LIMIT = 3;
+// 登录用户不再「无限」：给一个宽松但兜底的日上限，堵住「注册即绕过护栏」。
+// 正常用户一天几乎不可能练到 30 次；主要是防脚本用注册号刷爆语音成本。
+export const DEFAULT_USER_DAILY_SESSION_LIMIT = 30;
 export const DEFAULT_DAILY_COST_ALERT_CNY = 5;
 
 /** Resolve a positive-integer limit from an env-ish value, falling back to the default. */
@@ -20,6 +23,15 @@ export function resolveGuestDailyLimit(rawValue) {
     return parsed;
   }
   return DEFAULT_GUEST_DAILY_SESSION_LIMIT;
+}
+
+/** Resolve the per-user daily session limit from an env-ish value. */
+export function resolveUserDailyLimit(rawValue) {
+  const parsed = Number(rawValue);
+  if (Number.isInteger(parsed) && parsed > 0) {
+    return parsed;
+  }
+  return DEFAULT_USER_DAILY_SESSION_LIMIT;
 }
 
 /** Resolve the per-actor daily cost alert threshold (CNY). */
@@ -48,6 +60,25 @@ export function evaluateGuestQuota({ sessionsToday, readyClicksToday, limit }) {
 
   const used = Math.max(safeCount(sessionsToday), safeCount(readyClicksToday));
   const safeLimit = resolveGuestDailyLimit(limit);
+
+  return {
+    allowed: used < safeLimit,
+    used,
+    limit: safeLimit,
+    remaining: Math.max(0, safeLimit - used),
+  };
+}
+
+/**
+ * Decide whether a logged-in user may start another session today.
+ * Same shape as guest, but with the (looser) user daily limit.
+ */
+export function evaluateUserQuota({ sessionsToday, readyClicksToday, limit }) {
+  const safeCount = (value) =>
+    Number.isFinite(Number(value)) ? Math.max(0, Math.floor(Number(value))) : 0;
+
+  const used = Math.max(safeCount(sessionsToday), safeCount(readyClicksToday));
+  const safeLimit = resolveUserDailyLimit(limit);
 
   return {
     allowed: used < safeLimit,

@@ -267,11 +267,17 @@ function App() {
   /** 游客超出当日上限时拦截进入会话；放行返回 true。 */
   const guardGuestQuota = useCallback((): boolean => {
     if (usageActor.guestId && guestQuota && !guestQuota.allowed) {
+      trackEvent("quota_hit", {
+        userId: analyticsActor.userId,
+        guestId: analyticsActor.guestId,
+        sessionId: sessionIdRef.current,
+        props: { scope: "guest" },
+      });
       setQuotaBlockedOpen(true);
       return false;
     }
     return true;
-  }, [usageActor.guestId, guestQuota]);
+  }, [analyticsActor.guestId, analyticsActor.userId, usageActor.guestId, guestQuota]);
 
   useEffect(() => {
     setAnalyticsContext({
@@ -609,6 +615,8 @@ function App() {
       props: {
         durationSeconds: durationSeconds || 1,
         userTurns: speakingStats.userTurns,
+        speakingSeconds: speakingStats.userSpeakingSeconds ?? 0,
+        endReason: "user",
       },
     });
 
@@ -759,6 +767,13 @@ function App() {
     () => (practiceMode === "expression_practice" ? "表达复练" : scenarioLabel(topicId)),
     [practiceMode, topicId],
   );
+
+  const isReturningLearner = useMemo(() => {
+    if (isAnonymous || !homeGrowthData) {
+      return undefined;
+    }
+    return homeGrowthData.history.length > 0;
+  }, [homeGrowthData, isAnonymous]);
 
   const activeTopic = useMemo(
     () => (topicId ? (CHAT_TOPICS.find((t) => t.id === topicId) ?? null) : null),
@@ -932,6 +947,7 @@ function App() {
               usageGuestId={usageActor.guestId}
               analyticsUserId={analyticsActor.userId}
               analyticsGuestId={analyticsActor.guestId}
+              isReturning={isReturningLearner}
               voiceType={resolvedVoiceType}
               voiceOptions={voiceProfile.voices}
               showVoicePicker={showsVoicePicker(voiceProfile)}

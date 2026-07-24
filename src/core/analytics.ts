@@ -17,6 +17,9 @@ export type AppEventName =
   | "ready_click"
   | "first_utterance"
   | "session_complete"
+  | "session_abandon"
+  | "voice_error"
+  | "quota_hit"
   | "report_view"
   | "repractice_start";
 

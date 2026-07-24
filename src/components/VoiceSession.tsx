@@ -14,7 +14,7 @@ import type { UseVoiceSessionResult } from "../hooks/useVoiceSession";
 import { SPEED_OPTIONS } from "../config/session";
 import { FREE_TALK_DIRECTIONS, pickDirections } from "../config/chatTopics";
 import { isTypingTestAvailable } from "../config/features";
-import { trackEventOnce } from "../core/analytics";
+import { trackEventOnce, type TrackEventProps } from "../core/analytics";
 import { TaskCard } from "./TaskCard";
 import { TaskChecklist } from "./TaskChecklist";
 import { Button } from "./ui/Button";
@@ -573,6 +573,7 @@ export interface VoiceSessionProps {
   usageGuestId?: string | null;
   analyticsUserId?: string | null;
   analyticsGuestId?: string | null;
+  isReturning?: boolean;
   voiceType: string;
   voiceOptions: VoiceOption[];
   showVoicePicker: boolean;
@@ -602,6 +603,7 @@ export function VoiceSession({
   usageGuestId,
   analyticsUserId,
   analyticsGuestId,
+  isReturning,
   voiceType,
   voiceOptions,
   showVoicePicker,
@@ -651,20 +653,74 @@ export function VoiceSession({
   // 开口漏斗埋点：准备页展示时间 / 点「我准备好了」时间，用于 waitedMs 和 msFromReady。
   const prepShownAtRef = useRef(Date.now());
   const readyAtRef = useRef<number | null>(null);
+  const sessionEnteredAtRef = useRef(Date.now());
+  const hasEnteredSessionRef = useRef(false);
+  const hasFirstUtteranceRef = useRef(false);
+  const readyClickedRef = useRef(false);
   const openingFlowKeyRef = useRef(openingFlowKey);
   openingFlowKeyRef.current = openingFlowKey;
 
+  const analyticsMode =
+    activeTask || practiceMode === "expression_practice" ? "task" : "free";
+  const analyticsIsGuest = !usageUserId;
+
   // 开口漏斗埋点：进入对话页（每个 appSessionId 记一次）。
   useEffect(() => {
-    prepShownAtRef.current = Date.now();
-    readyAtRef.current = null;
+    const enterProps: TrackEventProps = {
+      topic: analyticsTopic,
+      mode: analyticsMode,
+      isGuest: analyticsIsGuest,
+    };
+    if (typeof isReturning === "boolean") {
+      enterProps.isReturning = isReturning;
+    }
+
     trackEventOnce(`enter_session:${appSessionId}`, "enter_session", {
       userId: analyticsUserId,
       guestId: analyticsGuestId,
       sessionId: appSessionId,
-      props: { topic: analyticsTopic },
+      props: enterProps,
     });
-  }, [analyticsGuestId, analyticsTopic, analyticsUserId, appSessionId]);
+  }, [
+    analyticsGuestId,
+    analyticsIsGuest,
+    analyticsMode,
+    analyticsTopic,
+    analyticsUserId,
+    appSessionId,
+    isReturning,
+  ]);
+
+  // 开口漏斗埋点：离开对话页前仍未说出 final 用户句，则记一次 abandon。
+  useEffect(() => {
+    const mountedAt = Date.now();
+    prepShownAtRef.current = mountedAt;
+    sessionEnteredAtRef.current = mountedAt;
+    readyAtRef.current = null;
+    hasEnteredSessionRef.current = true;
+    hasFirstUtteranceRef.current = false;
+    readyClickedRef.current = false;
+
+    return () => {
+      // React StrictMode immediately runs a development-only mount cleanup; do not count it as abandon.
+      if (Date.now() - mountedAt < 100) {
+        return;
+      }
+      if (!hasEnteredSessionRef.current || hasFirstUtteranceRef.current) {
+        return;
+      }
+      trackEventOnce(`session_abandon:${appSessionId}`, "session_abandon", {
+        userId: analyticsUserId,
+        guestId: analyticsGuestId,
+        sessionId: appSessionId,
+        props: {
+          reachedReady: readyClickedRef.current,
+          waitedMs: Math.max(0, Date.now() - sessionEnteredAtRef.current),
+          topic: analyticsTopic,
+        },
+      });
+    };
+  }, [appSessionId]);
 
   useEffect(() => {
     setTaskCardDismissed(false);
@@ -703,6 +759,7 @@ export function VoiceSession({
     if (!userHasFinalUtterance) {
       return;
     }
+    hasFirstUtteranceRef.current = true;
     trackEventOnce(`first_utterance:${appSessionId}`, "first_utterance", {
       userId: analyticsUserId,
       guestId: analyticsGuestId,
@@ -737,6 +794,7 @@ export function VoiceSession({
 
   const handleOpeningReady = useCallback(() => {
     // 开口漏斗埋点：点「我准备好了」（每个会话记一次，重试点击不重复计）。
+    readyClickedRef.current = true;
     if (readyAtRef.current === null) {
       readyAtRef.current = Date.now();
     }

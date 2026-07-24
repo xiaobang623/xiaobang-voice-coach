@@ -3,6 +3,7 @@ import { WebSocket, WebSocketServer } from "ws";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { createUsageTracker, parseUsageContext } from "./proxy-usage.js";
+import { verifyVoiceToken } from "./api/_lib/voice-token.js";
 
 const PORT = Number(process.env.PORT) || 8080;
 const TARGET_URL = "wss://openspeech.bytedance.com/api/v3/realtime/dialogue";
@@ -43,6 +44,8 @@ function parseAllowedOrigins() {
 
 const allowedOrigins = parseAllowedOrigins();
 
+const voiceTokenSecret = process.env.VOICE_TOKEN_SECRET ?? "";
+
 function isOriginAllowed(origin) {
   if (!origin) {
     return allowedOrigins.length === 0;
@@ -51,6 +54,48 @@ function isOriginAllowed(origin) {
     return true;
   }
   return allowedOrigins.includes(origin);
+}
+
+/**
+ * 校验连接鉴权 token（堵「谁拿到 proxy 地址就能白嫖烧钱」的洞）。
+ *
+ * - 未配置 VOICE_TOKEN_SECRET → fail-open 放行（灰度期：先部署代码、后设密钥，
+ *   避免部署顺序把正常用户锁在门外）。设了密钥即强制校验。
+ * - 校验：签名 + 未过期 + token 里的身份必须和 query 上的 userId/guestId 一致，
+ *   防止攻击者拿别人 token 或伪造身份。
+ * 返回 { ok, reason }。
+ */
+function verifyConnectionAuth(requestUrl) {
+  if (!voiceTokenSecret) {
+    return { ok: true, reason: "auth-disabled" };
+  }
+
+  let params;
+  try {
+    params = new URL(requestUrl ?? "/", "http://localhost").searchParams;
+  } catch {
+    return { ok: false, reason: "bad-url" };
+  }
+
+  const token = params.get("vt");
+  if (!token) {
+    return { ok: false, reason: "missing-token" };
+  }
+
+  const result = verifyVoiceToken(token, voiceTokenSecret);
+  if (!result.valid) {
+    return { ok: false, reason: result.reason };
+  }
+
+  const { actor, id } = result.claims;
+  const queryUserId = params.get("userId");
+  const queryGuestId = params.get("guestId");
+  const claimedId = actor === "user" ? queryUserId : queryGuestId;
+  if (!claimedId || claimedId !== id) {
+    return { ok: false, reason: "identity-mismatch" };
+  }
+
+  return { ok: true, reason: "ok" };
 }
 
 function rewriteStartSessionFrame(data, isBinary) {
@@ -148,13 +193,22 @@ const httpServer = createServer((req, res) => {
 
 const wss = new WebSocketServer({
   server: httpServer,
-  verifyClient: ({ origin }, callback) => {
-    if (isOriginAllowed(origin)) {
-      callback(true);
+  verifyClient: (info, callback) => {
+    const origin = info.origin;
+    if (!isOriginAllowed(origin)) {
+      console.warn("[proxy] rejected connection from origin:", origin || "(missing)");
+      callback(false, 403, "Origin not allowed");
       return;
     }
-    console.warn("[proxy] rejected connection from origin:", origin || "(missing)");
-    callback(false, 403, "Origin not allowed");
+
+    const auth = verifyConnectionAuth(info.req?.url);
+    if (!auth.ok) {
+      console.warn("[proxy] rejected connection, auth failed:", auth.reason);
+      callback(false, 401, "Voice token invalid");
+      return;
+    }
+
+    callback(true);
   },
 });
 
@@ -165,6 +219,13 @@ httpServer.on("listening", () => {
     console.log("[proxy] allowed origins:", allowedOrigins.join(", "));
   } else {
     console.warn("[proxy] ALLOWED_ORIGINS not set — accepting all origins");
+  }
+  if (voiceTokenSecret) {
+    console.log("[proxy] voice token auth: ENABLED (rejecting connections without a valid token)");
+  } else {
+    console.warn(
+      "[proxy] VOICE_TOKEN_SECRET not set — voice token auth DISABLED (anyone with the URL can burn cost). Set it before public launch.",
+    );
   }
 });
 

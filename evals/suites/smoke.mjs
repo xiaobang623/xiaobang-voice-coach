@@ -27,9 +27,11 @@ import { postProcessDirections } from "../../directions-post-process.js";
 import { getModelCostRate, calculateCostForUsage } from "../../api/_lib/cost-rates.js";
 import {
   evaluateGuestQuota,
+  evaluateUserQuota,
   buildDailyCostAlerts,
   startOfTodayShanghai,
 } from "../../api/_lib/quota.js";
+import { signVoiceToken, verifyVoiceToken } from "../../api/_lib/voice-token.js";
 import { buildSystemPrompt } from "../../src/config/session.ts";
 import { getGreeting } from "../../src/core/greeting.ts";
 import { makeCheck } from "../lib/harness.mjs";
@@ -63,6 +65,30 @@ export async function run() {
     makeCheck("覆盖 quiet/hesitates/stuck", /quiet|hesitates|stuck/i.test(conversationPrompt)),
     makeCheck("要求安抚和小台阶", /take your time|no rush/i.test(conversationPrompt) && /scaffold|simpler way|two easy options/i.test(conversationPrompt)),
     makeCheck("明确不纠错", /Never correct/i.test(conversationPrompt)),
+  ]);
+
+  // -------------------------------------------------------------------------
+  // 0.2 开口漏斗埋点：事件白名单和前端类型保持同步
+  // -------------------------------------------------------------------------
+  const analyticsSource = readFileSync(
+    new URL("../../src/core/analytics.ts", import.meta.url),
+    "utf8",
+  );
+  const logEventSource = readFileSync(new URL("../../api/log-event.js", import.meta.url), "utf8");
+  const requiredAnalyticsEvents = ["session_abandon", "voice_error", "quota_hit"];
+  record("SMK-ANALYTICS-001-new-events-whitelisted", [
+    makeCheck(
+      "客户端 AppEventName 包含新增 3 事件",
+      requiredAnalyticsEvents.every((eventName) => analyticsSource.includes(`| "${eventName}"`)),
+    ),
+    makeCheck(
+      "服务端 /api/log-event 白名单包含新增 3 事件",
+      requiredAnalyticsEvents.every((eventName) => logEventSource.includes(`"${eventName}"`)),
+    ),
+    makeCheck(
+      "埋点保持 keepalive，支持页面卸载时 best-effort 上报",
+      analyticsSource.includes("keepalive: true"),
+    ),
   ]);
 
   // -------------------------------------------------------------------------
@@ -525,6 +551,79 @@ export async function run() {
     makeCheck(
       "北京时间 7/16 23:30 仍算 7/16（起点 UTC 7/15 16:00）",
       startOfTodayShanghai(new Date("2026-07-16T15:30:00.000Z")) === "2026-07-15T16:00:00.000Z",
+    ),
+  ]);
+  record("SMK-QUOTA-006-user-limit", [
+    makeCheck(
+      "登录用户不再无限：到达日上限拦截（30/30）",
+      evaluateUserQuota({ sessionsToday: 30, readyClicksToday: 0, limit: 30 }).allowed === false,
+    ),
+    makeCheck(
+      "登录用户默认上限 30（坏 limit 回退）",
+      evaluateUserQuota({ sessionsToday: 0, readyClicksToday: 0, limit: "abc" }).limit === 30,
+    ),
+    makeCheck(
+      "登录用户未到上限放行",
+      evaluateUserQuota({ sessionsToday: 5, readyClicksToday: 2, limit: 30 }).allowed === true,
+    ),
+  ]);
+
+  // -------------------------------------------------------------------------
+  // 7. 语音代理鉴权 token（HMAC 签名/校验，堵烧钱洞）
+  // -------------------------------------------------------------------------
+  const TOKEN_SECRET = "test-secret-0123456789";
+  record("SMK-VTOKEN-001-sign-verify-roundtrip", [
+    makeCheck(
+      "签发后能验过，且身份/会话还原正确",
+      (() => {
+        const t = signVoiceToken(
+          { actor: "guest", id: "g1", sessionId: "s1", ttlSeconds: 120 },
+          TOKEN_SECRET,
+        );
+        const v = verifyVoiceToken(t, TOKEN_SECRET);
+        return v.valid && v.claims.actor === "guest" && v.claims.id === "g1" && v.claims.sessionId === "s1";
+      })(),
+    ),
+    makeCheck(
+      "换一个密钥验签失败（防伪造）",
+      (() => {
+        const t = signVoiceToken({ actor: "user", id: "u1" }, TOKEN_SECRET);
+        return verifyVoiceToken(t, "another-secret").valid === false;
+      })(),
+    ),
+    makeCheck(
+      "篡改 payload 后签名对不上",
+      (() => {
+        const t = signVoiceToken({ actor: "guest", id: "g1" }, TOKEN_SECRET);
+        const tampered = "x" + t.slice(1);
+        return verifyVoiceToken(tampered, TOKEN_SECRET).valid === false;
+      })(),
+    ),
+  ]);
+  record("SMK-VTOKEN-002-expiry-and-guards", [
+    makeCheck(
+      "过期 token 拒绝",
+      (() => {
+        const past = Date.now() - 10 * 60 * 1000;
+        const t = signVoiceToken({ actor: "guest", id: "g1", ttlSeconds: 60 }, TOKEN_SECRET, {
+          now: past,
+        });
+        const v = verifyVoiceToken(t, TOKEN_SECRET);
+        return v.valid === false && v.reason === "expired";
+      })(),
+    ),
+    makeCheck(
+      "无密钥不签发也不放行（sign→null, verify→no-secret）",
+      signVoiceToken({ actor: "guest", id: "g1" }, "") === null &&
+        verifyVoiceToken("whatever.sig", "").reason === "no-secret",
+    ),
+    makeCheck(
+      "缺 id 不签发",
+      signVoiceToken({ actor: "guest", id: "" }, TOKEN_SECRET) === null,
+    ),
+    makeCheck(
+      "畸形 token 判 malformed",
+      verifyVoiceToken("no-dot-here", TOKEN_SECRET).reason === "malformed",
     ),
   ]);
 
