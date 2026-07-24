@@ -75,19 +75,46 @@ export async function run() {
     "utf8",
   );
   const logEventSource = readFileSync(new URL("../../api/log-event.js", import.meta.url), "utf8");
-  const requiredAnalyticsEvents = ["session_abandon", "voice_error", "quota_hit"];
+  const requiredAnalyticsEvents = [
+    "session_abandon",
+    "voice_error",
+    "quota_hit",
+    "correction_view",
+    "repractice_complete",
+    "growth_view",
+    "memory_delete",
+  ];
   record("SMK-ANALYTICS-001-new-events-whitelisted", [
     makeCheck(
-      "客户端 AppEventName 包含新增 3 事件",
+      "客户端 AppEventName 包含新增学习闭环/护栏事件",
       requiredAnalyticsEvents.every((eventName) => analyticsSource.includes(`| "${eventName}"`)),
     ),
     makeCheck(
-      "服务端 /api/log-event 白名单包含新增 3 事件",
+      "服务端 /api/log-event 白名单包含新增学习闭环/护栏事件",
       requiredAnalyticsEvents.every((eventName) => logEventSource.includes(`"${eventName}"`)),
     ),
     makeCheck(
       "埋点保持 keepalive，支持页面卸载时 best-effort 上报",
       analyticsSource.includes("keepalive: true"),
+    ),
+  ]);
+
+  const learningMetricsMigration = readFileSync(
+    new URL("../../supabase/migrations/0014_app_event_learning_metrics.sql", import.meta.url),
+    "utf8",
+  );
+  record("SMK-ANALYTICS-002-admin-learning-functions", [
+    makeCheck(
+      "后台学习指标聚合函数已迁移",
+      ["app_event_funnel_diagnostics", "app_event_north_star", "app_event_retention"].every((name) => learningMetricsMigration.includes(name)),
+    ),
+    makeCheck(
+      "新聚合函数 revoke public/anon/authenticated",
+      ["revoke execute on function public.app_event_funnel_diagnostics", "revoke execute on function public.app_event_north_star", "revoke execute on function public.app_event_retention"].every((snippet) => learningMetricsMigration.includes(snippet)),
+    ),
+    makeCheck(
+      "新聚合函数只 grant service_role",
+      (learningMetricsMigration.match(/to service_role/g) ?? []).length >= 3,
     ),
   ]);
 

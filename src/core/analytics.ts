@@ -20,6 +20,10 @@ export type AppEventName =
   | "session_abandon"
   | "voice_error"
   | "quota_hit"
+  | "correction_view"
+  | "repractice_complete"
+  | "growth_view"
+  | "memory_delete"
   | "report_view"
   | "repractice_start";
 

@@ -59,14 +59,25 @@ export default async function handler(req, res) {
 
   try {
     const supabase = getAdminSupabase();
-    const { data, error } = await supabase.rpc("app_event_funnel", {
-      p_from: range.from,
-      p_to: range.to,
-    });
+    const [funnelResult, diagnosticsResult] = await Promise.all([
+      supabase.rpc("app_event_funnel", {
+        p_from: range.from,
+        p_to: range.to,
+      }),
+      supabase.rpc("app_event_funnel_diagnostics", {
+        p_from: range.from,
+        p_to: range.to,
+      }),
+    ]);
 
-    if (error) {
-      throw new Error(error.message);
+    if (funnelResult.error) {
+      throw new Error(funnelResult.error.message);
     }
+    if (diagnosticsResult.error) {
+      throw new Error(diagnosticsResult.error.message);
+    }
+
+    const data = funnelResult.data ?? [];
 
     const byEvent = new Map(
       (data ?? []).map((row) => [
@@ -110,7 +121,40 @@ export default async function handler(req, res) {
       conversion_from_prev: null,
     }));
 
-    json(res, 200, { success: true, data: { steps, extra_events: extraEvents } });
+    const diagnosticsByName = new Map(
+      (diagnosticsResult.data ?? []).map((row) => [
+        row.metric_name,
+        {
+          actor_count: Number(row.actor_count ?? 0),
+          event_count: Number(row.event_count ?? 0),
+        },
+      ]),
+    );
+    const enterActors = diagnosticsByName.get("enter_session")?.actor_count ?? 0;
+    const firstUtteranceActors = diagnosticsByName.get("first_utterance")?.actor_count ?? 0;
+    const reluctantRate =
+      enterActors > 0 ? Number((1 - firstUtteranceActors / enterActors).toFixed(4)) : null;
+
+    json(res, 200, {
+      success: true,
+      data: {
+        steps,
+        extra_events: extraEvents,
+        diagnostics: {
+          reluctant_open_rate: reluctantRate,
+          enter_session_actors: enterActors,
+          first_utterance_actors: firstUtteranceActors,
+          abandon_reached_ready_actors:
+            diagnosticsByName.get("session_abandon_ready")?.actor_count ?? 0,
+          abandon_reached_ready_events:
+            diagnosticsByName.get("session_abandon_ready")?.event_count ?? 0,
+          abandon_not_ready_actors:
+            diagnosticsByName.get("session_abandon_not_ready")?.actor_count ?? 0,
+          abandon_not_ready_events:
+            diagnosticsByName.get("session_abandon_not_ready")?.event_count ?? 0,
+        },
+      },
+    });
   } catch (error) {
     json(res, 500, {
       success: false,

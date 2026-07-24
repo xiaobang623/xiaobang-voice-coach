@@ -23,6 +23,7 @@ import { useAuth } from "../hooks/useAuth";
 import { scenarioLabel } from "../config/topics";
 import { LevelSystemCard } from "./LevelSystem";
 import { ExpressionMasteryTabs } from "./ExpressionMasteryTabs";
+import { trackEvent } from "../core/analytics";
 
 export interface GrowthPanelProps {
   isGuest: boolean;
@@ -246,6 +247,10 @@ export function GrowthPanel({ isGuest, onGoToAccount }: GrowthPanelProps) {
   const [deletingMemoryKey, setDeletingMemoryKey] = useState<string | null>(null);
 
   useEffect(() => {
+    trackEvent("growth_view", { props: { tab: "growth" } });
+  }, []);
+
+  useEffect(() => {
     if (isGuest || !userId) {
       setStats(null);
       setHistory([]);
@@ -334,12 +339,13 @@ export function GrowthPanel({ isGuest, onGoToAccount }: GrowthPanelProps) {
   );
 
   const persistMemoryUpdate = useCallback(
-    async (nextMemory: UserMemory, deletingKey: string) => {
+    async (nextMemory: UserMemory, deletingKey: string, kind: "fact" | "entry") => {
       setDeletingMemoryKey(deletingKey);
       const previousMemory = memory;
       setMemory(nextMemory);
       try {
         await upsertUserMemory(nextMemory);
+        trackEvent("memory_delete", { props: { kind } });
         if (userId) {
           writeGrowthCache(userId, {
             stats: stats ?? {
@@ -384,6 +390,7 @@ export function GrowthPanel({ isGuest, onGoToAccount }: GrowthPanelProps) {
           },
         },
         `fact:${fact}`,
+        "fact",
       );
     },
     [deletingMemoryKey, memory, persistMemoryUpdate],
@@ -400,6 +407,7 @@ export function GrowthPanel({ isGuest, onGoToAccount }: GrowthPanelProps) {
           entries: memory.entries.filter((item) => item.sessionId !== entry.sessionId),
         },
         `entry:${entry.sessionId}`,
+        "entry",
       );
     },
     [deletingMemoryKey, memory, persistMemoryUpdate],

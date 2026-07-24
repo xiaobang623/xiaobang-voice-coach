@@ -188,7 +188,45 @@ export interface FunnelStepRow {
   conversion_from_prev: number | null;
 }
 
+export interface FunnelDiagnostics {
+  reluctant_open_rate: number | null;
+  enter_session_actors: number;
+  first_utterance_actors: number;
+  abandon_reached_ready_actors: number;
+  abandon_reached_ready_events: number;
+  abandon_not_ready_actors: number;
+  abandon_not_ready_events: number;
+}
+
 export interface FunnelSummaryData {
   steps: FunnelStepRow[];
   extra_events: FunnelStepRow[];
+  diagnostics?: FunnelDiagnostics;
+}
+
+export interface NorthStarPeriod {
+  period: "current" | "previous";
+  week_start: string;
+  speaking_actor_count: number;
+  total_speaking_seconds: number;
+  avg_speaking_minutes: number;
+}
+
+export interface RetentionRow {
+  metric_name: "next_day" | "seven_day";
+  cohort_actors: number;
+  returned_actors: number;
+  retention_rate: number | null;
+}
+
+export interface LearningMetricsData {
+  north_star: {
+    current: NorthStarPeriod;
+    previous: NorthStarPeriod;
+    wow: {
+      speaking_actor_count: number | null;
+      avg_speaking_minutes: number | null;
+    };
+  };
+  retention: RetentionRow[];
 }

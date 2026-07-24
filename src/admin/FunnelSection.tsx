@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { FunnelStepRow } from "./types";
+import type { FunnelDiagnostics, FunnelStepRow } from "./types";
 import { defaultDateFrom, fetchFunnelSummary, todayIsoDate } from "./api";
 
 type RangePreset = 7 | 30;
@@ -24,10 +24,46 @@ function conversionToneClass(value: number | null) {
   return "text-red-700";
 }
 
+function DiagnosticPill({ label, value, hint }: { label: string; value: string; hint: string }) {
+  return (
+    <div className="rounded-2xl border border-border-subtle bg-bg-warm/60 px-4 py-3">
+      <p className="text-xs text-text-muted">{label}</p>
+      <p className="mt-1 text-lg font-semibold text-text">{value}</p>
+      <p className="mt-1 text-[11px] text-text-secondary">{hint}</p>
+    </div>
+  );
+}
+
+function FunnelDiagnosticsRow({ diagnostics }: { diagnostics?: FunnelDiagnostics }) {
+  if (!diagnostics) {
+    return null;
+  }
+  return (
+    <div className="mb-4 grid gap-3 md:grid-cols-3">
+      <DiagnosticPill
+        label="不敢开口率"
+        value={formatConversion(diagnostics.reluctant_open_rate)}
+        hint={`${diagnostics.first_utterance_actors}/${diagnostics.enter_session_actors} 人进页后说出第一句`}
+      />
+      <DiagnosticPill
+        label="点了准备才跑"
+        value={`${diagnostics.abandon_reached_ready_actors} 人`}
+        hint={`${diagnostics.abandon_reached_ready_events} 次 abandon · 可能是开麦/建连后流失`}
+      />
+      <DiagnosticPill
+        label="没点准备就跑"
+        value={`${diagnostics.abandon_not_ready_actors} 人`}
+        hint={`${diagnostics.abandon_not_ready_events} 次 abandon · 可能是准备页说服不足`}
+      />
+    </div>
+  );
+}
+
 export function FunnelSection() {
   const [preset, setPreset] = useState<RangePreset>(7);
   const [steps, setSteps] = useState<FunnelStepRow[]>([]);
   const [extraEvents, setExtraEvents] = useState<FunnelStepRow[]>([]);
+  const [diagnostics, setDiagnostics] = useState<FunnelDiagnostics | undefined>(undefined);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -45,11 +81,13 @@ export function FunnelSection() {
         if (!cancelled) {
           setSteps(result.steps ?? []);
           setExtraEvents(result.extra_events ?? []);
+          setDiagnostics(result.diagnostics);
         }
       } catch (err) {
         if (!cancelled) {
           setSteps([]);
           setExtraEvents([]);
+          setDiagnostics(undefined);
           setError(err instanceof Error ? err.message : "加载失败");
         }
       } finally {
@@ -103,6 +141,7 @@ export function FunnelSection() {
               该区间还没有事件数据。前台完整走一次练习后这里就有数字了。
             </p>
           ) : null}
+          <FunnelDiagnosticsRow diagnostics={diagnostics} />
           <div className="overflow-x-auto">
             <table className="min-w-full text-left text-sm">
               <thead className="text-text-muted">
